@@ -9,6 +9,9 @@ async function bootstrapDeployment(resourcesPath, dataHome, progress = () => {},
   const manifestFile = path.join(template, 'deployment.json');
   if (!fs.existsSync(manifestFile)) return null;
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  const wechatVersion=manifest.wechatVersion??'4.1.10.27';
+  if(!['4.1.10.27','4.1.15.13'].includes(wechatVersion))throw new Error('发行包微信版本无效。');
+  const currentSender=wechatVersion==='4.1.15.13';
   const dshBundled = manifest.dshBundled !== false;
   const workspace = path.join(dataHome, 'workspace');
   const firstInstall = !fs.existsSync(path.join(workspace,'config/wechatagent.json'));
@@ -50,15 +53,23 @@ async function bootstrapDeployment(resourcesPath, dataHome, progress = () => {},
   // Keep an existing legacy executable/data binding; new installations choose
   // an independently installed DSH through the setup page.
   const dsh = dshBundled ? path.join(versionRuntime,'dsh','DeepSeek Harness.exe') : previousSettings.dsh || '';
-  const client = path.join(workspace, 'state', 'hook', 'wechat-4.1.10.27');
+  const client = path.join(workspace, 'state', 'hook', 'wechat-'+wechatVersion);
   if (!fs.existsSync(path.join(client, 'Weixin.exe'))) {
     progress('正在准备独立匹配微信…');
     fs.mkdirSync(path.dirname(client), { recursive: true }); await fs.promises.cp(path.join(resourcesPath, 'vendor', 'wechat'), client, { recursive: true });
   }
-  const nativeDir = path.join(workspace, 'state', 'hook', 'native');
+  const nativeDir = path.join(workspace, 'state', 'hook', currentSender?'native-4.1.15.13':'native');
+  const nativeSource=path.join(resourcesPath,'vendor',currentSender?'hook-current':'hook');
+  const nativeFiles=currentSender?['wechatagent-text-4.1.15.13.dll','wechatagent-text-loader.exe','build.json']:['version.dll','build.json'];
+  if(currentSender){
+    const build=JSON.parse(fs.readFileSync(path.join(nativeSource,'build.json'),'utf8').replace(/^\uFEFF/,''));
+    const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(path.join(nativeSource,file))).digest('hex');
+    if(build.targetVersion!==wechatVersion||build.profile!=='4.1.15.13-media-mentions-v2'||build.loaderInit!=='worker-path-v1'||build.voiceProfile!=='recording-factory-v1'||
+      hash(nativeFiles[0])!==build.sha256||hash(nativeFiles[1])!==build.loaderSha256)throw new Error('发行包微信发送组件校验失败。');
+  }
   fs.mkdirSync(nativeDir, { recursive: true });
   const previousBuild = path.join(nativeDir,'build.json');
-  if (fs.existsSync(previousBuild) && fs.existsSync(path.join(nativeDir,'version.dll'))) {
+  if (!currentSender && fs.existsSync(previousBuild) && fs.existsSync(path.join(nativeDir,'version.dll'))) {
     const installedHash=crypto.createHash('sha256').update(fs.readFileSync(path.join(nativeDir,'version.dll'))).digest('hex');
     const nextHash=crypto.createHash('sha256').update(fs.readFileSync(path.join(resourcesPath,'vendor/hook/version.dll'))).digest('hex');
     if (installedHash !== nextHash) {
@@ -66,8 +77,8 @@ async function bootstrapDeployment(resourcesPath, dataHome, progress = () => {},
       if (previous.sha256 === installedHash) fs.copyFileSync(previousBuild,path.join(nativeDir,'build.previous.json'));
     }
   }
-  for (const file of ['version.dll', 'build.json']) {
-    const source = path.join(resourcesPath, 'vendor', 'hook', file), target = path.join(nativeDir, file);
+  for (const file of nativeFiles) {
+    const source = path.join(nativeSource, file), target = path.join(nativeDir, file);
     const bytes = fs.readFileSync(source);
     if (!fs.existsSync(target) || crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex') !== crypto.createHash('sha256').update(bytes).digest('hex')) fs.writeFileSync(target,bytes);
   }
@@ -76,6 +87,7 @@ async function bootstrapDeployment(resourcesPath, dataHome, progress = () => {},
     const config = JSON.parse(fs.readFileSync(path.join(workspace, 'config', 'wechatagent.example.json'), 'utf8'));
     config.runtime.python = python;
     config.runtime.dshDesktop = dshBundled ? dsh : '';
+    config.hook={...config.hook,expectedVersion:wechatVersion,wechatExecutable:path.relative(workspace,path.join(client,'Weixin.exe'))};
     fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
   }
   if(firstInstall&&Array.isArray(manifest.essentialPlugins)&&manifest.essentialPlugins.length){

@@ -29,3 +29,50 @@ test('switching stops queued voice/file jobs and rejects new requests before pre
  const file=new FileDeliveryWorker(adapter);let result;file.save=job=>{result=job;};await file.run({state:'queued'});assert.equal(result.error,'FILE_DISABLED_IN_FOREGROUND');assert.equal(result.state,'failed');
  f.setMode('native');assert.equal(store.queue({key:'wechat:private:42',pluginId:'voice',generation:'g',batchId:'restored',request:{kind:'speech',text:'hello'}}).state,'queued');
 });
+test('4.1.15.13 image jobs use the authorized image route and require a matching image receipt',async t=>{
+ const f=fixture(t),key='wechat:private:42',sender='wxid_owner';
+ Object.assign(f.config.wechat,{workModes:{[key]:'assistant'},assistant:{administrators:[sender],fileTransferChats:{[key]:true}}});
+ f.setMode('native');
+ const cwd=path.join(f.root,'workspace');fs.mkdirSync(cwd);
+ fs.writeFileSync(path.join(cwd,'fixture.png'),Buffer.from('89504e470d0a1a0a','hex'));
+ const store=new FileTransfers(f.root),args={key,sender,cwd,file:'fixture.png',batchId:'b'.repeat(64),image:true};
+ const queued=await store.queue(args);
+ assert.equal((await store.queue(args)).id,queued.id);
+ assert.notEqual((await store.queue({...args,image:false})).id,queued.id);
+ const job=store.read(queued.id),rows=[],calls=[];
+ const adapter={directory:f.root,status:{native_image_send:true,native_file_send:false,confirmed_sends:0},
+  checkNative:async()=>({account:'account'}),resolveTarget:async()=> 'wxid_target',messages:async()=>rows,
+  native:async(route,body,account)=>{
+   calls.push(route);assert.equal(account,'account');assert.equal(body.wxidorgid,'wxid_target');
+   assert.equal(body.path,path.join(f.root,'state/hook/outgoing-images',job.id,'fixture.png'));
+   const row={isSend:true,localType:3,createTime:Math.floor(Date.now()/1000),serverId:'11'};
+   rows.push({...row,localId:1,imageMd5:'0'.repeat(32)},{...row,localId:2,imageMd5:job.md5});
+   return {ret:0};
+  }};
+ await new FileDeliveryWorker(adapter).run(job);
+ assert.deepEqual(calls,['/SendImgMsg']);
+ assert.deepEqual(store.read(job.id).receipt,{messageId:'2',type:'wechat-image',serverConfirmed:true});
+});
+test('4.1.15.13 compatible file send is opt-in, checks the target, and never calls the Hook file API',async t=>{
+ const f=fixture(t),key='wechat:private:42',sender='wxid_owner';
+ f.config.hook={expectedVersion:'4.1.15.13',wechatExecutable:'Weixin.exe'};
+ Object.assign(f.config.wechat,{workModes:{[key]:'assistant'},assistant:{administrators:[sender],fileTransferChats:{[key]:true}}});
+ f.setMode('native');
+ const cwd=path.join(f.root,'workspace');fs.mkdirSync(cwd);fs.writeFileSync(path.join(cwd,'fixture.txt'),'example');
+ const store=new FileTransfers(f.root),queued=await store.queue({key,sender,cwd,file:'fixture.txt',batchId:'c'.repeat(64)});
+ const rows=[];let sends=0;
+ const adapter={directory:f.root,hook:f.config.hook,status:{version:'4.1.15.13',native_file_send:false,confirmed_sends:0},
+  checkNative:async()=>({account:'account'}),resolveTarget:async()=> 'wxid_target',messages:async()=>rows,
+  native:()=>assert.fail('must not call Hook'),foregroundTarget:async()=>({username:'wxid_target',displayName:'Fixture'}),
+  foreground:{send:async(body,check)=>{
+    await check();sends++;assert.equal(body.name,'Fixture');assert.equal(body.attachment,store.staged(store.read(queued.id)));
+    rows.push({isSend:true,localType:49,fileKind:'appmsg-6',fileName:'fixture.txt',fileSize:7,createTime:Math.floor(Date.now()/1000),serverId:'12',localId:2});
+    return {accepted:true,attempted:true};
+  }}};
+ const worker=new FileDeliveryWorker(adapter);
+ await assert.rejects(worker.run(store.read(queued.id)),/FILE_NATIVE_SENDER_NOT_READY/);
+ f.config.wechat.textTransport.compatibilityMedia=true;
+ fs.writeFileSync(path.join(f.root,'config/wechatagent.json'),JSON.stringify(f.config));
+ await worker.run(store.read(queued.id));
+ assert.equal(sends,1);assert.equal(store.read(queued.id).receipt.type,'wechat-file');
+});

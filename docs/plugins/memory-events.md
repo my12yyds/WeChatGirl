@@ -2,7 +2,7 @@
 
 版本：1.2.1 · 可选插件，按需安装
 
-[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.5/memory-events-1.2.1.zip)
+[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.7/memory-events-1.2.1.zip)
 
 ## 适合做什么
 

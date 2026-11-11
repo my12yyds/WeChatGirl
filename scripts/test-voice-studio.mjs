@@ -24,3 +24,27 @@ test('archiving old completed jobs preserves replay deduplication',async t=>{con
 
 
 test('multipart song delivery confirms each part before submitting the next and finishes the complete series',async t=>{const crypto=await import('node:crypto'),f=await fixture(t);let saved=configuration(f.root);updatePlugin(f.root,'voice-studio',{revision:saved.revision,enabled:true,permissions:['voice','storage'],chats:[key],settings:{...saved.config.plugins['voice-studio'].settings,voiceSendIntervalSeconds:0,voicePerMinute:30}});saved=configuration(f.root);const queued=f.jobs.queue({key,pluginId:'voice-studio',generation:saved.config.plugins['voice-studio'].generation,batchId:'multipart-test',request:{kind:'song',title:'虚构测试歌',playbackMode:'full'}}),job=f.jobs.read(queued.id);fs.mkdirSync(path.join(f.root,'state/voice/outgoing'),{recursive:true});const parts=Array.from({length:5},(_,i)=>{const bytes=Buffer.from('isolated-voice-part-'+i),md5=crypto.createHash('md5').update(bytes).digest('hex');fs.writeFileSync(path.join(f.root,'state/voice/outgoing',md5+'.silk'),bytes);return {md5,size:bytes.length,durationMs:i===4?45000:55000};});Object.assign(job,parts[0],{state:'prepared',segmentProofs:parts,segmentIndex:0,playbackMode:'full'});f.jobs.write(job);const rows=[],calls=[],adapter={directory:f.root,status:{native_voice_send:true,confirmed_sends:0},targetsSending:new Set(),checkNative:async()=>({account:'fixture'}),resolveTarget:async()=> 'wxid_fixture',messages:async()=>rows,native:async(_route,payload)=>{calls.push(payload);rows.push({isSend:true,localType:34,localId:String(calls.length),serverId:String(calls.length+10),createTime:Math.floor(Date.now()/1000),content:'<voicemsg voicemd5="'+payload.md5+'"/>'});return {ret:0};}};const worker=new VoiceDeliveryWorker(adapter,{verifyPayload:async()=>{throw Error('Live receipt lookup forbidden');}});for(let i=0;i<5;i++){await worker.run(f.jobs.read(job.id),new AbortController().signal);assert.equal(calls.length,i+1);assert.equal(f.jobs.read(job.id).state,i===4?'confirmed':'prepared');}assert.equal(f.jobs.read(job.id).segmentReceipts.length,5);assert(calls.every(c=>c.duration_ms<=55000));});
+
+test('group full-song receipt mentions the verified requester once even when the reminder receipt is uncertain',async t=>{
+ const crypto=await import('node:crypto'),f=await fixture(t),group='wechat:group:456',sender='wxid_requester';
+ const configPath=path.join(f.root,'config/wechatagent.json'),config=JSON.parse(fs.readFileSync(configPath));
+ config.wechat.whitelist.groups=['456'];fs.writeFileSync(configPath,JSON.stringify(config));
+ const saved=configuration(f.root);
+ updatePlugin(f.root,'voice-studio',{revision:saved.revision,enabled:true,permissions:['voice','storage'],chats:[group],settings:{voiceSendIntervalSeconds:0,voicePerMinute:30}});
+ await f.runtime.sync();
+ const turn={...f.turn(),conversationKey:group,actorId:sender,peopleObservations:[{senderId:sender,memberId:crypto.createHash('sha256').update('wechat-member:'+sender).digest('hex'),name:'测试点歌人'}]};
+ await f.runtime.execute('voice-studio__sing',{kind:'song',title:'虚构测试歌'},turn);
+ turn.voiceRequests[0].request.playbackMode='full';
+ f.runtime.commitVoice(turn);
+ const job=f.jobs.list()[0];
+ assert.equal(job.requester.wxid,sender);
+ const folder=path.join(f.root,'state/voice/outgoing');fs.mkdirSync(folder,{recursive:true});
+ const parts=[0,1].map(i=>{const audio=Buffer.from('song-part-'+i),md5=crypto.createHash('md5').update(audio).digest('hex');fs.writeFileSync(path.join(folder,md5+'.silk'),audio);return {md5,size:audio.length,durationMs:1000};});
+ Object.assign(job,parts[0],{state:'prepared',segmentProofs:parts,segmentIndex:0,playbackMode:'full'});f.jobs.write(job);
+ const rows=[],calls=[];
+ const adapter={directory:f.root,status:{native_voice_send:true,confirmed_sends:0},targetsSending:new Set(),checkNative:async()=>({account:'fixture'}),resolveTarget:async()=> 'group@chatroom',messages:async()=>rows,
+  native:async(_route,payload)=>{calls.push('voice');rows.push({isSend:true,localType:34,localId:String(calls.length),serverId:String(calls.length+10),createTime:Math.floor(Date.now()/1000),content:'<voicemsg voicemd5="'+payload.md5+'"/>'});return {ret:0};},
+  send:async(kind,target,_text,deliveryId,_proactive,mention)=>{calls.push('mention');assert.equal(kind,'group');assert.equal(target,'456');assert.equal(deliveryId,'song-ready:'+job.id);assert.equal(mention.wxid,sender);assert(f.jobs.read(job.id).requesterNotified);throw Error('Uncertain receipt');}};
+ for(let i=0;i<2;i++)await new VoiceDeliveryWorker(adapter).run(f.jobs.read(job.id),new AbortController().signal);
+ assert.deepEqual(calls,['voice','mention','voice']);assert.equal(f.jobs.read(job.id).state,'confirmed');
+});

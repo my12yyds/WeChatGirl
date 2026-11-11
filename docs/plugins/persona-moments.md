@@ -2,7 +2,7 @@
 
 版本：0.3.1 · 可选插件，按需安装
 
-[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.5/persona-moments-0.3.1.zip)
+[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.7/persona-moments-0.3.1.zip)
 
 ## 适合做什么
 

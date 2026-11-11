@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createConsole} from './console-server.mjs';
+import {hookAccountProblem} from './wechat-account-check.mjs';
 const verified={path:'C:/WeChatGirl/Weixin.exe',version:'4.1.10.27',coreVersion:'4.1.10.27',architecture:'x64',signed:true,coreSigned:true,bundled:true,configured:true};
 test('only the complete signed matching client selects the bundled sender',()=>{
  const result=clientCatalog({nativeReady:true,clients:[verified,{...verified,path:'C:/system/Weixin.exe',version:'4.2.0.21',coreVersion:'4.2.0.21',bundled:false,running:true}]});
@@ -13,12 +14,30 @@ test('only the complete signed matching client selects the bundled sender',()=>{
  for(const change of [{signed:false},{coreSigned:false},{coreVersion:'4.1.15.13'},{architecture:'x86'}])assert.equal(clientCatalog({nativeReady:true,clients:[{...verified,...change}]}).bundled.canLaunch,false);
  assert.equal(clientCatalog({nativeReady:false,clients:[verified]}).bundled.canLaunch,false);
 });
-test('an experimental newer profile cannot enable the old injector and missing clients remain explicit',()=>{
+test('the newer profile requires its own sender and only the exact verified client is selectable',()=>{
  for(const version of ['4.1.15.13','4.1.15.56']){
   const data=clientCatalog({nativeReady:true,clients:[{...verified,version,coreVersion:version}]});assert.equal(data.bundled.canLaunch,false);assert.equal(data.bundled.tool,null);
-  assert.match(data.bundled.status,version==='4.1.15.13'?/基础文字.*语音、表情等尚未适配/:/不能套用上游 4\.1\.15\.13/);
+  assert.match(data.bundled.status,version==='4.1.15.13'?/发送组件未准备/:/没有匹配组件/);
  }
+ const current={...verified,version:'4.1.15.13',coreVersion:'4.1.15.13',bundled:false};
+ const candidate=clientCatalog({currentReady:true,clients:[current,{...current,version:'4.1.15.56',coreVersion:'4.1.15.56'},{...current,coreSigned:false}]});
+ assert.deepEqual(candidate.clients.map(row=>row.canLaunch),[true,false,false]);
+ const bundled=clientCatalog({currentReady:true,clients:[{...current,bundled:true}]});
+ assert.equal(bundled.expectedVersion,'4.1.15.13');
+ assert.equal(bundled.bundled.canLaunch,true);
+ assert.equal(bundled.bundled.tool,'wechat-hook-4.1.15.13');
+ assert.match(renderClientResult(candidate,String),/使用并打开 4\.1\.15\.13/);
  assert.equal(clientCatalog({clients:[]}).bundled,null);
+});
+test('new sender must attest its exact profile and match exactly one reader account',()=>{
+ const version='4.1.15.13';
+ const health={integration:'WeChatAgent-1',backend:'wechat-hook',startupState:'ready',version,
+  profile:'4.1.15.13-media-mentions-v2',loaderInit:'worker-path-v1',nativeTextSend:true,databaseAccounts:['test-account']};
+ assert.equal(hookAccountProblem(health,'test-account',version),'');
+ assert.equal(hookAccountProblem({...health,profile:'4.1.15.13-text-v1'},'test-account',version),'HOOK_PROFILE_MISMATCH');
+ assert.equal(hookAccountProblem({...health,loaderInit:undefined},'test-account',version),'HOOK_PROFILE_MISMATCH');
+ assert.equal(hookAccountProblem(health,'test-account','4.1.15.56'),'HOOK_VERSION_MISMATCH');
+ assert.equal(hookAccountProblem({...health,databaseAccounts:['test-account','other']},'test-account',version),'HOOK_MULTIPLE_ACCOUNT_DATABASES');
 });
 test('detection coalesces concurrent scans, caches results and permits an explicit refresh',async()=>{
  let count=0;const detector=createClientDetector('unused',{scan:async()=>{count++;return {clients:[verified],nativeReady:true}}});

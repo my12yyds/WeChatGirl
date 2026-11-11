@@ -1,7 +1,9 @@
 {
   "name": "wechatgirl-windows-packaging",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "description": "Isolated Windows installer build dependencies",
-  "dependencies": { "electron-builder": "26.15.3" }
+  "dependencies": {
+    "electron-builder": "26.15.3"
+  }
 }

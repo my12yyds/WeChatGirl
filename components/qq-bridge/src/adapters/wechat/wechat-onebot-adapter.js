@@ -50,7 +50,7 @@ export class WechatOneBotAdapter extends BaseAdapter {
 
   async start() { await this.server.start(); }
   async stop() { await this.server.stop(); }
-  async sendText({ kind, target, text, deliveryId, source, contextId, mention }) {
+  async sendText({ kind, target, text, deliveryId, source, contextId, mention, quoteServerId }) {
     if (kind !== 'private' && kind !== 'group') throw new TypeError('invalid WeChat kind');
     const content = String(text ?? '').trim();
     if (!content) throw new TypeError('empty WeChat message');
@@ -62,6 +62,7 @@ export class WechatOneBotAdapter extends BaseAdapter {
     const params = { [kind === 'group' ? 'group_id' : 'user_id']: id,
       message: [...(mention?[{type:'at',data:{qq:mention.id}}]:[]),{ type: 'text', data: { text: content } }],...(deliveryId?{wechatagent_delivery_id:deliveryId}:{}),
       ...(mention?{wechatagent_mention:{wxid:mention.wxid,name:mention.name}}:{}),
+      ...(quoteServerId!==undefined?{wechatagent_quote_server_id:quoteServerId}:{}),
       ...(source==='proactive'?{wechatagent_source:'proactive',wechatagent_context_id:contextId}:{}) };
     let result;
     try{result=await this.server.action(action,params);}

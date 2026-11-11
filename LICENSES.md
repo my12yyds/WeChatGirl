@@ -1,5 +1,9 @@
 ﻿# 许可证与来源（源码发布副本）
 
+## 微信 4.1.15.13 发送组件
+
+`scripts/native-hook/text_4_1_15_13.cpp`、`text_loader.cpp` 及启动等待逻辑取自 [sourcepro5/WeChatAgent](https://github.com/sourcepro5/WeChatAgent/tree/38c1060ce500a294d69a4a2f9e07ca1b63a08b06) 的 MIT 源码。版本选择、签名校验和账号核对由 WeChatGirl 集成。
+
 ## 微信语音识别插件与接收链路
 
 `optional-extensions/speech-recognition` 基于 [sourcepro5/WeChatAgent](https://github.com/sourcepro5/WeChatAgent/tree/38c1060ce500a294d69a4a2f9e07ca1b63a08b06/optional-extensions/speech-recognition) 的 1.2.0 实现，固定参考提交 `38c1060ce500a294d69a4a2f9e07ca1b63a08b06`。保留上游 MIT 通知于插件目录 `LICENSE`，来源与适配范围见 `UPSTREAM.json`。本项目补齐读取器、OneBot、DSH、插件 worker 与配置页的集成，沿用当前账号、聊天、消息绑定及显式权限。语音专项回归取自同一提交并按本项目环境适配；不包含用户音频或服务凭据。

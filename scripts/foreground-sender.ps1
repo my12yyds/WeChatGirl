@@ -10,6 +10,8 @@ try {
       [WhaleForeground]::Attempted=$false
       if($body.probe) { $ok=[WhaleForeground]::Probe($body.executable) }
       elseif($body.favorite){ $ok=[WhaleForeground]::SendFavorite($body.executable,$body.name) }
+      elseif($body.attachment){ $ok=[WhaleForeground]::SendAttachment($body.executable,$body.name,$body.attachment) }
+      elseif($body.quote){ $ok=[WhaleForeground]::SendQuote($body.executable,$body.name,$body.text,$body.quote) }
       else { $ok=[WhaleForeground]::Send($body.executable,$body.name,$body.text) }
       [Console]::WriteLine((@{accepted=$ok;attempted=[WhaleForeground]::Attempted} | ConvertTo-Json -Compress))
     } catch {

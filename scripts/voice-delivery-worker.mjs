@@ -6,6 +6,7 @@ import {runMusicTool} from '../packages/voice-studio/music.mjs';
 import {voiceQueueRank} from '../packages/voice-studio/progress.mjs';
 import {voiceSendReadyAt} from '../packages/voice-studio/delivery-policy.mjs';
 import {readSendingMode} from '../packages/wechat-send-policy.mjs';
+import {validMention} from '../components/qq-bridge/src/core/group-mentions.js';
 export async function verifyVoicePayload(root,job,{signal}={}){
   if(!/^[a-f0-9]{64}$/.test(job.id??''))return null;
   try{
@@ -39,12 +40,23 @@ export class VoiceDeliveryWorker{
     job.fallbackDeadlineAt??=Date.now()+120000;if(Date.now()>job.fallbackDeadlineAt){job.fallbackState='failed';this.store.write(job);return;}
     const [,kind,target]=job.key.split(':');try{job.fallbackAttempts=(job.fallbackAttempts??0)+1;this.store.write(job);await this.adapter.send(kind,target,job.fallbackText,'voice-fallback:'+job.id,false);job.fallbackState='confirmed';delete job.retryAt;}catch{job.retryAt=Date.now()+3000;}this.store.write(job);
   }
+  async notifySongRequester(job,kind,target){
+    if(kind!=='group'||job.request.kind!=='song'||job.request.playbackMode!=='full'||(job.segmentIndex??0)!==0||job.requesterNotified||!validMention(job.requester))return;
+    // Persist before sending so an uncertain text receipt cannot repeat the mention.
+    job.requesterNotified=true;
+    this.store.write(job);
+    try{await this.adapter.send(kind,target,'你点的歌做好了，来听吧。','song-ready:'+job.id,false,job.requester);}
+    catch{this.log('[Voice] '+job.id.slice(0,12)+' song ready reminder not confirmed');}
+  }
   async run(job,signal){
     const adapter=this.adapter;
     if(readSendingMode(adapter.directory)==='foreground'){job.state=['submitting','submitted'].includes(job.state)?'unconfirmed':'failed';job.error='VOICE_DISABLED_IN_FOREGROUND';this.save(job);return;}
     if(!this.store.allowed(job)){job.state=['submitting','submitted'].includes(job.state)?'unconfirmed':'cancelled';job.error='VOICE_ACCESS_CHANGED';this.save(job);return;}
     if(Date.now()>=job.deadlineAt){job.state=['submitting','submitted'].includes(job.state)?'unconfirmed':'expired';this.save(job);return;}
-    const identity=await adapter.checkNative();if(adapter.status.native_voice_send!==true){this.nextAt=Date.now()+5000;job.waitReason='native_not_ready';this.store.write(job);adapter.status.last_voice_error='VOICE_NATIVE_SENDER_NOT_READY';return;}
+    const identity=await adapter.checkNative();if(adapter.status.native_voice_send!==true&&!['submitting','submitted'].includes(job.state)){
+      if(adapter.status.version==='4.1.15.13'){job.state='failed';job.error='VOICE_NATIVE_VERSION_UNSUPPORTED';delete job.waitReason;this.save(job);return;}
+      this.nextAt=Date.now()+5000;job.waitReason='native_not_ready';this.store.write(job);adapter.status.last_voice_error='VOICE_NATIVE_SENDER_NOT_READY';return;
+    }
     const [,kind,target]=job.key.split(':'),wxid=await adapter.resolveTarget(kind,target);
     if(job.account&&job.account!==identity.account||job.wxid&&job.wxid!==wxid)throw voiceError('VOICE_ACCOUNT_CHANGED');
     if(['queued','generating'].includes(job.state)){
@@ -72,7 +84,7 @@ export class VoiceDeliveryWorker{
     if(['submitting','submitted'].includes(job.state)){
       let receipt=voiceReceipt(await adapter.messages(wxid),job);
       if(!receipt&&Date.now()-(job.payloadCheckedAt??0)>=5000){job.payloadCheckedAt=Date.now();this.store.write(job);receipt=await this.verifyPayload(adapter.directory,job,{signal});}
-      if(receipt){if(this.store.cancelled(job)||!this.store.allowed(job)||signal.aborted)return;if(advanceSongPart(job,receipt)){this.save(job);adapter.status.confirmed_sends++;return;}job.state='confirmed';job.receipt=receipt;delete job.error;this.save(job);adapter.status.confirmed_sends++;return;}
+      if(receipt){if(this.store.cancelled(job)||!this.store.allowed(job)||signal.aborted)return;await this.notifySongRequester(job,kind,target);if(this.store.cancelled(job)||!this.store.allowed(job)||signal.aborted)return;if(advanceSongPart(job,receipt)){this.save(job);adapter.status.confirmed_sends++;return;}job.state='confirmed';job.receipt=receipt;delete job.error;this.save(job);adapter.status.confirmed_sends++;return;}
       if(Date.now()-(job.startedAt??0)>45000){job.state='unconfirmed';job.error='VOICE_RECEIPT_UNCONFIRMED';this.save(job);}else{job.retryAt=Date.now()+1000;this.store.write(job);}
     }
   }

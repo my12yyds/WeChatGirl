@@ -18,6 +18,7 @@ import {validateMemeLibrarySettings} from '../packages/dsh-social-bridge-plugin/
 import {validateFishNotebook} from '../packages/dsh-social-bridge-plugin/fish-notebook-policy.mjs';
 import {validateMemberMemory} from '../packages/dsh-social-bridge-plugin/member-memory-policy.mjs';
 import {validateTextTransport} from './foreground-sender.mjs';
+import {hookProfile} from './hook-profiles.mjs';
 import {validateVisionSettings} from '../packages/dsh-social-bridge-plugin/vision-fallback.mjs';
 
 import {validateConversationSettings,conversationMode} from '../packages/dsh-social-bridge-plugin/conversation-policy.mjs';
@@ -77,7 +78,7 @@ export function validateConfig(config) {
     if ((config.runtime.weflowMode ?? 'nt') !== 'nt') throw new Error('WeChat-Hook requires the NT reader for account and receipt checks');
     const url = new URL(config.hook?.baseUrl ?? '');
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Hook API must be an HTTP loopback base URL');
-    if (config.hook.expectedVersion !== '4.1.10.27' || !config.hook.wechatExecutable || /[\r\n"\0]/.test(config.hook.wechatExecutable)) throw new Error('Configure the matching WeChat-Hook executable and version 4.1.10.27');
+    if (!hookProfile(config.hook.expectedVersion) || !config.hook.wechatExecutable || /[\r\n"\0]/.test(config.hook.wechatExecutable)) throw new Error('Configure a matching WeChat executable for version 4.1.10.27 or 4.1.15.13');
     for (const [key, low, high] of [['requestTimeoutMs',1000,5000],['receiptTimeoutMs',1000,18000],['maxConcurrentSends',1,4]]) {
       const value = config.hook[key];
       if (!Number.isInteger(value) || value < low || value > high) throw new Error('Invalid Hook ' + key);

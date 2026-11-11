@@ -10,7 +10,9 @@ $item = Get-Item -LiteralPath $directory -Force
 if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Client directory is a link; refusing permission changes.' }
 $links = @(Get-ChildItem -LiteralPath $directory -Recurse -Force -Attributes ReparsePoint)
 if ($links.Count) { throw 'Linked client content found; inspect before permission changes.' }
-$backupFile = Join-Path $scope 'client-pin-acl.json'
+$version=[string]$config.hook.expectedVersion
+if($version -notin @('4.1.10.27','4.1.15.13')){throw 'Unsupported client protection version.'}
+$backupFile = Join-Path $scope $(if($version -eq '4.1.10.27'){'client-pin-acl.json'}else{'client-pin-acl-4.1.15.13.json'})
 if ($Unlock) {
     if (Test-Path -LiteralPath $backupFile) {
         $saved = Get-Content -LiteralPath $backupFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -22,8 +24,8 @@ if ($Unlock) {
     }
     exit 0
 }
-if ((Get-Item -LiteralPath $exe).VersionInfo.FileVersion -ne '4.1.10.27') { throw 'Restore the matching 4.1.10.27 client before pinning.' }
-$updater = Join-Path $directory '4.1.10.27\WeixinUpdate.exe'
+if ((Get-Item -LiteralPath $exe).VersionInfo.FileVersion -ne $version) { throw 'Restore the matching client before pinning.' }
+$updater = Join-Path $directory "$version\WeixinUpdate.exe"
 if (Test-Path -LiteralPath $updater) {
     $disabled = $updater+'.disabled'
     if (Test-Path -LiteralPath $disabled) { throw 'Updater backup already exists; inspect before replacement.' }

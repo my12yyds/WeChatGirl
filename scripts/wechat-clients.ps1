@@ -4,9 +4,10 @@ $ErrorActionPreference='Stop'
 $rootPath=[IO.Path]::GetFullPath($Root)
 $config=Get-Content -LiteralPath (Join-Path $rootPath 'config/wechatagent.json') -Raw -Encoding UTF8|ConvertFrom-Json
 $configured=if([IO.Path]::IsPathRooted($config.hook.wechatExecutable)){[IO.Path]::GetFullPath($config.hook.wechatExecutable)}else{[IO.Path]::GetFullPath((Join-Path $rootPath $config.hook.wechatExecutable))}
-$bundled=Join-Path $rootPath 'state/hook/wechat-4.1.10.27/Weixin.exe'
+$bundled=Join-Path $rootPath 'state/hook/wechat-4.1.15.13/Weixin.exe'
 $candidates=[Collections.Generic.List[string]]::new()
 $candidates.Add($configured);$candidates.Add($bundled)
+$candidates.Add((Join-Path $rootPath 'state/hook/wechat-4.1.10.27/Weixin.exe'))
 foreach($base in @($env:ProgramFiles,${env:ProgramFiles(x86)},$env:LOCALAPPDATA)){
  if($base){foreach($relative in @('Tencent/Weixin/Weixin.exe','Tencent/WeChat/WeChat.exe')){$candidates.Add((Join-Path $base $relative))}}
 }
@@ -35,4 +36,12 @@ foreach($file in @($candidates|Select-Object -Unique)){
 $native=Join-Path $rootPath 'state/hook/native'
 $nativeReady=$false
 try{$record=Get-Content -LiteralPath (Join-Path $native 'build.json') -Raw -Encoding UTF8|ConvertFrom-Json;$nativeReady=($record.targetVersion -eq '4.1.10.27' -and (Get-FileHash -LiteralPath (Join-Path $native 'version.dll') -Algorithm SHA256).Hash.ToLowerInvariant() -eq $record.sha256)}catch{}
-[pscustomobject]@{clients=@($rows);nativeReady=$nativeReady}|ConvertTo-Json -Depth 4 -Compress
+$current=Join-Path $rootPath 'state/hook/native-4.1.15.13'
+$currentReady=$false
+try {
+ $record=Get-Content -LiteralPath (Join-Path $current 'build.json') -Raw -Encoding UTF8|ConvertFrom-Json
+ $currentReady=$record.targetVersion -eq '4.1.15.13' -and $record.profile -eq '4.1.15.13-media-mentions-v2' -and $record.loaderInit -eq 'worker-path-v1' -and $record.voiceProfile -eq 'recording-factory-v1' -and
+   (Get-FileHash -LiteralPath (Join-Path $current 'wechatagent-text-4.1.15.13.dll')).Hash -eq $record.sha256 -and
+   (Get-FileHash -LiteralPath (Join-Path $current 'wechatagent-text-loader.exe')).Hash -eq $record.loaderSha256
+}catch{}
+[pscustomobject]@{clients=@($rows);nativeReady=$nativeReady;currentReady=$currentReady}|ConvertTo-Json -Depth 4 -Compress

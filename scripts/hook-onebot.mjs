@@ -7,7 +7,7 @@ import {VoiceDeliveryWorker} from './voice-delivery-worker.mjs';
 import { TextDeliveryStore } from './text-delivery-store.mjs';
 import {hookAccountProblem} from './wechat-account-check.mjs';
 import {ForegroundSender,validateTextTransport} from './foreground-sender.mjs';
-import {foregroundFavoriteId} from '../packages/wechat-send-policy.mjs';
+import {compatibilityMediaEnabled,foregroundFavoriteId} from '../packages/wechat-send-policy.mjs';
 import {validMention} from '../components/qq-bridge/src/core/group-mentions.js';
 import {proactivePolicy,withinProactiveWindow,conversationSnapshot,declinedProactive} from '../components/qq-bridge/src/core/proactive-policy.js';
 import http from 'node:http';
@@ -128,6 +128,8 @@ export class HookOneBot {
     this.startupStage='hook-health';
     const native = await this.native('/WeChatAgent/health').catch(error=>{throw healthError(error,'HOOK','hook-health',this.hook.baseUrl);});
     if(!native || typeof native!=='object')fail('HOOK_HEALTH_INVALID_RESPONSE');
+    this.status.native_image_send=native.nativeImageSend===true;
+    this.status.compatibility_file_send=native.version==='4.1.15.13'&&compatibilityMediaEnabled(this.project);
     this.status.native_sticker_send = native.nativeStickerSend===true;this.status.native_file_send=native.nativeFileSend===true;this.status.native_voice_send=native.nativeVoiceSend===true;this.status.native_mention_send=native.nativeMentionSend===true;this.status.fileTransfer='durable-outbox-v1';
     this.status.hook_connected = true; this.status.version = native.version ?? '';
     const accountProblem=hookAccountProblem(native,reader.accountDirectory,this.hook.expectedVersion);
@@ -171,13 +173,15 @@ export class HookOneBot {
       (s.username.includes('@chatroom')?'group':'private')===kind).length!==1)fail('TARGET_MAPPING_AMBIGUOUS_OR_MISSING');
     return matches[0];
   }
-  async send(kind, target, text, deliveryId, proactive, mention) {
+  async send(kind, target, text, deliveryId, proactive, mention, quoteServerId) {
     const key = `${kind}:${target}`;
     if (this.targetsSending.has(key) || this.targetsSending.size >= (this.hook.maxConcurrentSends ?? 4)) fail('SENDER_BUSY');
     this.targetsSending.add(key);
     try {
       const identity = await this.checkNative();
-      const mode=this.project.wechat?.textTransport?.mode??'native';
+      const quote=quoteServerId!==undefined;
+      if(quote&&(!deliveryId||!(/^[1-9]\d{0,31}$/.test(quoteServerId))||mention||proactive))fail('INVALID_WECHAT_QUOTE');
+      const mode=quote?'foreground':this.project.wechat?.textTransport?.mode??'native';
       const wxid = mode==='foreground'?(await this.foregroundTarget(kind,target)).username:await this.resolveTarget(kind, target);
       let mentionWxid;
       if(mention!==undefined){
@@ -196,6 +200,7 @@ export class HookOneBot {
       let attempt=this.textDeliveries.get(operation);
       if(attempt&&(attempt.account!==identity.account||attempt.wxid!==wxid))fail('TEXT_DELIVERY_ACCOUNT_MISMATCH');
       if(attempt&&attempt.text!==text)fail('TEXT_DELIVERY_ID_CONFLICT');
+      if(attempt&&attempt.quoteServerId!==quoteServerId)fail('TEXT_DELIVERY_ID_CONFLICT');
       if(attempt?.state==='confirmed'&&(deliveryId||Date.now()-attempt.confirmedAt<60000)){
         this.status.last_error='';return {...attempt.response,reused:true};
       }
@@ -211,10 +216,18 @@ export class HookOneBot {
       if (!this.allowed(kind, target)) fail('CONVERSATION_NOT_ALLOWED');
       if(!attempt){
         const currentRows=await this.messages(wxid);
+        let quotedText;
+        if(quote){
+          if(!compatibilityMediaEnabled(this.project))fail('FOREGROUND_QUOTE_DISABLED');
+          const reference=currentRows.find(row=>row.localType===1&&String(row.serverId)===quoteServerId);
+          quotedText=reference?.fullText??reference?.content;
+          if(typeof quotedText!=='string'||!quotedText.trim()||quotedText.length>500||/[\r\n]/.test(quotedText)||
+            currentRows.filter(row=>row.localType===1&&(row.fullText??row.content)===quotedText).length!==1)fail('FOREGROUND_QUOTE_TARGET_NOT_UNIQUE');
+        }
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
         const baseline=currentRows.map(row=>String(row.localId)).filter(id=>/^\d+$/.test(id));
         const targetSession=mode==='foreground'?await this.foregroundTarget(kind,target):null;
-        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,transport:mode,
+        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,transport:mode,...(quote?{quoteServerId}:{}),
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
         this.textDeliveries.put(attempt); // Persist before submission; replay must never submit it twice.
         const reject=(code,nativeRet)=>{
@@ -225,8 +238,9 @@ export class HookOneBot {
         let accepted;
         try{
           if(mode==='foreground'){
-            accepted=await this.foreground.send({executable:path.resolve(this.directory,this.hook.wechatExecutable),name:targetSession.displayName,text},async()=>{
-              this.reload();if((this.project.wechat?.textTransport?.mode??'native')!=='foreground'||!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
+            accepted=await this.foreground.send({executable:path.resolve(this.directory,this.hook.wechatExecutable),name:targetSession.displayName,text,...(quote?{quote:quotedText}:{})},async()=>{
+              this.reload();if(!(quote?compatibilityMediaEnabled(this.project):this.project.wechat?.textTransport?.mode==='foreground')||!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
+              if(quote&&(await this.checkNative()).account!==identity.account)fail('TEXT_DELIVERY_ACCOUNT_MISMATCH');
               const current=await this.foregroundTarget(kind,target);if(current.username!==wxid||current.displayName!==targetSession.displayName)fail('TARGET_MAPPING_AMBIGUOUS_OR_MISSING');
             });
             if(!accepted?.accepted)throw Error(accepted?.attempted===false&&/^FOREGROUND_[A-Z_]+$/.test(accepted.code??'')?accepted.code:'FOREGROUND_SUBMISSION_UNCONFIRMED');
@@ -252,9 +266,9 @@ export class HookOneBot {
       try{
         do {
           const rows=await this.messages(wxid);
-          const candidates=rows.filter(row=>row.isSend&&(row.localType===1||row.localType===undefined)&&Number.isSafeInteger(Number(row.localId))&&Number(row.localId)>0&&
+          const candidates=rows.filter(row=>row.isSend&&(quote?row.quoteReceipt?.sourceId===quoteServerId:row.localType===1||row.localType===undefined)&&Number.isSafeInteger(Number(row.localId))&&Number(row.localId)>0&&
             !attempt.baseline.includes(String(row.localId))&&Number(row.createTime)>=Math.floor(attempt.startedAt/1000)-30&&
-            String(row.fullText??row.content??row.parsedContent??'').trim()===text.trim())
+            String(quote?row.quoteReceipt.text:row.fullText??row.content??row.parsedContent??'').trim()===text.trim())
             .sort((a,b)=>Number(a.createTime)-Number(b.createTime)||Number(a.localId)-Number(b.localId));
           if(!attempt.candidateId&&candidates.length){attempt.candidateId=String(candidates[0].localId);this.textDeliveries.put(attempt);}
           const row=candidates.find(item=>String(item.localId)===attempt.candidateId);
@@ -291,6 +305,7 @@ export class HookOneBot {
     if(!stickerPolicy(this.project.wechat,'wechat:'+kind+':'+target).enabled)return {enabled:false,stickers:[]};
     await this.checkNative();
     if(this.project.wechat?.textTransport?.mode==='foreground')return {enabled:true,stickers:[{id:foregroundFavoriteId,label:'随机收藏表情',source:'favorite'}]};
+    if(!this.status.native_sticker_send&&compatibilityMediaEnabled(this.project))return {enabled:true,stickers:[{id:foregroundFavoriteId,label:'随机收藏表情',source:'favorite'}]};
     if(!this.status.native_sticker_send)return {enabled:false,stickers:[]};
     const key='wechat:'+kind+':'+target;
     const result=await this.reader('/api/v1/stickers?conversationKey='+encodeURIComponent(key)+(typeof query==='string'&&query.trim()?'&query='+encodeURIComponent(query.slice(0,500)):''));
@@ -315,7 +330,7 @@ export class HookOneBot {
     if(abandon&&(!deliveryId||!receiptOnly))fail('INVALID_RECEIPT_QUERY');
     this.reload();
     if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
-    const mode=this.project.wechat?.textTransport?.mode??'native';
+    const mode=id===foregroundFavoriteId&&compatibilityMediaEnabled(this.project)?'foreground':this.project.wechat?.textTransport?.mode??'native';
     if(mode==='foreground'&&id!==foregroundFavoriteId)fail('HOOK_STICKER_DISABLED_IN_FOREGROUND');
     if(!/^[a-f0-9]{64}$/.test(id))fail('INVALID_STICKER_REFERENCE');
     const operation=deliveryId?this.textDeliveries.key(kind,target,deliveryId,'[STICKER:'+id+']'):null;
@@ -373,7 +388,12 @@ export class HookOneBot {
         this.stickerPending.set(key,attempt);
         this.persistStickerPending();
         let accepted;
-        try{accepted=mode==='foreground'?await this.foreground.send({executable:path.resolve(this.directory,this.hook.wechatExecutable),name:targetSession.displayName,favorite:true},async()=>{this.reload();if((this.project.wechat?.textTransport?.mode??'native')!=='foreground'||!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');}):await this.native('/SendStickerMsg',{wxidorgid:wxid,sticker:sticker.fields,path:sticker.path},identity.account);}
+        try{accepted=mode==='foreground'?await this.foreground.send({executable:path.resolve(this.directory,this.hook.wechatExecutable),name:targetSession.displayName,favorite:true},async()=>{
+          this.reload();
+          if((this.project.wechat?.textTransport?.mode!=='foreground'&&!compatibilityMediaEnabled(this.project))||!this.allowed(kind,target)||!stickerPolicy(this.project.wechat,conversationKey).enabled)fail('CONVERSATION_NOT_ALLOWED');
+          const current=await this.foregroundTarget(kind,target);
+          if(current.username!==wxid||current.displayName!==targetSession.displayName)fail('TARGET_MAPPING_AMBIGUOUS_OR_MISSING');
+        }):await this.native('/SendStickerMsg',{wxidorgid:wxid,sticker:sticker.fields,path:sticker.path},identity.account);}
         catch(error){if(/^API_HTTP_(400|401|403|409|429)$/.test(error.message)){this.stickerPending.delete(key);this.persistStickerPending();}throw error;}
         if(mode==='foreground'?accepted?.accepted!==true:accepted?.ret!==0){this.stickerPending.delete(key);this.persistStickerPending();fail(mode==='foreground'?'FOREGROUND_STICKER_UNCONFIRMED':'NATIVE_STICKER_REJECTED');}
       }
@@ -411,6 +431,9 @@ export class HookOneBot {
         const target = String(params[kind === 'group' ? 'group_id' : 'user_id'] ?? '');
         if (!/^\d+$/.test(target) || !this.allowed(kind, target)) fail('CONVERSATION_NOT_ALLOWED');
         const deliveryId=params.wechatagent_delivery_id;
+        const quoteServerId=params.wechatagent_quote_server_id;
+        if(quoteServerId!==undefined&&(typeof quoteServerId!=='string'||!(/^[1-9]\d{0,31}$/.test(quoteServerId))||!deliveryId||params.wechatagent_source!==undefined||
+          Array.isArray(params.message)&&params.message.some(segment=>segment?.type!=='text')))fail('INVALID_WECHAT_QUOTE');
         if(deliveryId!==undefined&&!/^[a-f0-9]{64}$/.test(deliveryId))fail('INVALID_DELIVERY_ID');
         if(params.wechatagent_receipt_only!==undefined&&typeof params.wechatagent_receipt_only!=='boolean')fail('INVALID_RECEIPT_QUERY');
         if(params.wechatagent_defer_receipt!==undefined&&typeof params.wechatagent_defer_receipt!=='boolean')fail('INVALID_RECEIPT_QUERY');
@@ -441,7 +464,7 @@ export class HookOneBot {
             data=await this.send(kind,target,text,deliveryId,proactive,mention);
           }else{
             const text=textSegments(params.message);
-            data=await this.send(kind,target,text,deliveryId,proactive);
+            data=await this.send(kind,target,text,deliveryId,proactive,undefined,quoteServerId);
           }
         }
       } else if(['get_sticker_list','get_sticker_labels','save_sticker_labels'].includes(action)){

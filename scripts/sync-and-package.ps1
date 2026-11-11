@@ -1,7 +1,8 @@
 param(
- [string]$Version='0.5.6',
+ [string]$Version='0.5.7',
  [string]$Baseline='D:\weixiagen\release\archive\WeChatAgent-0.4.3',
- [string]$ClientRoot='D:\weixiagen\data\workspace\state\hook\wechat-4.1.10.27',
+ [string]$ClientRoot='D:\weixiagen\data\workspace\state\hook\wechat-4.1.15.13',
+ [string]$HookRoot='D:\weixiagen\data\workspace\state\hook\native-4.1.15.13',
  [string]$ReaderKeyDll='',
  [string]$VoiceComponentsZip='',
  [string]$OutputDirectory='',
@@ -31,9 +32,25 @@ if($LASTEXITCODE -ne 0){throw 'Reader key component missing, changed or incompat
 if($stage -eq $baselinePath -or $stage.StartsWith($baselinePath+'\',[StringComparison]::OrdinalIgnoreCase) -or $baselinePath.StartsWith($stage+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Staging must be separate from baseline.'}
 if((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $OutputDirectory)){throw 'Use new staging and output directories.'}
 if((Get-Content -LiteralPath (Join-Path $repo 'package.json') -Raw|ConvertFrom-Json).version -ne $Version){throw 'Source and requested versions differ.'}
-foreach($binary in @('Weixin.exe','4.1.10.27/Weixin.dll')){
- if((Get-Item -LiteralPath (Join-Path $clientPath $binary)).VersionInfo.FileVersion -ne '4.1.10.27'){throw 'Client binary must be 4.1.10.27.'}
+$wechatVersion='4.1.15.13'
+foreach($binary in @('Weixin.exe',"$wechatVersion/Weixin.dll")){
+ $file=Join-Path $clientPath $binary
+ $signature=Get-AuthenticodeSignature -LiteralPath $file
+ if((Get-Item -LiteralPath $file).VersionInfo.FileVersion -ne $wechatVersion -or $signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Tencent'){throw 'Client must be Tencent-signed WeChat 4.1.15.13 x64.'}
+ $stream=[IO.File]::OpenRead($file)
+ try{
+  $reader=[IO.BinaryReader]::new($stream)
+  $stream.Position=60
+  $peOffset=$reader.ReadInt32()
+  $stream.Position=$peOffset+4
+  if($reader.ReadUInt16() -ne 34404){throw 'Client binary must be x64.'}
+ }finally{$stream.Dispose()}
 }
+$hookPath=(Resolve-Path -LiteralPath $HookRoot).Path
+$hookBuild=Get-Content -LiteralPath (Join-Path $hookPath 'build.json') -Raw|ConvertFrom-Json
+if($hookBuild.targetVersion -ne $wechatVersion -or $hookBuild.profile -ne '4.1.15.13-media-mentions-v2' -or $hookBuild.loaderInit -ne 'worker-path-v1' -or $hookBuild.voiceProfile -ne 'recording-factory-v1' -or
+ (Get-FileHash -LiteralPath (Join-Path $hookPath 'wechatagent-text-4.1.15.13.dll')).Hash.ToLowerInvariant() -ne $hookBuild.sha256 -or
+ (Get-FileHash -LiteralPath (Join-Path $hookPath 'wechatagent-text-loader.exe')).Hash.ToLowerInvariant() -ne $hookBuild.loaderSha256){throw 'Hook 4.1.15.13 profile/hash mismatch.'}
 function Copy-Tree([string]$Source,[string]$Destination,[string[]]$ExcludeDirs=@(),[string[]]$ExcludeFiles=@()){
  New-Item -ItemType Directory -Path $Destination -Force|Out-Null
  $copyArgs=@($Source,$Destination,'/E','/COPY:DAT','/DCOPY:DAT','/R:2','/W:2','/NFL','/NDL','/NP')
@@ -48,7 +65,7 @@ $resources=Join-Path $stage 'app/resources'
 # Copy program files only, never baseline workspaces, desktop sessions or data runtimes.
 Copy-Tree $baselineApp (Join-Path $stage 'app') @(
  (Join-Path $baselineApp 'resources/project'),(Join-Path $baselineApp 'resources/app'),
- (Join-Path $baselineApp 'resources/vendor/wechat'),(Join-Path $baselineApp 'resources/vendor/hook-current')
+ (Join-Path $baselineApp 'resources/vendor/wechat'),(Join-Path $baselineApp 'resources/vendor/hook'),(Join-Path $baselineApp 'resources/vendor/hook-current')
 ) @('storage.ini','*.token','uninstall.exe','Uninstall WeChatGirl.exe','Uninstall WeChatAgent.exe','uninstallerIcon.ico')
 $project=Join-Path $resources 'project'
 New-Item -ItemType Directory -Path $project -Force|Out-Null
@@ -84,11 +101,11 @@ Copy-Tree (Join-Path $baselinePath 'app/resources/project/vendor/netease-qr') (J
 $clientDestination=Join-Path $resources 'vendor/wechat'
 New-Item -ItemType Directory -Path $clientDestination -Force|Out-Null
 Copy-Item -LiteralPath (Join-Path $clientPath 'Weixin.exe') -Destination $clientDestination
-Copy-Tree (Join-Path $clientPath '4.1.10.27') (Join-Path $clientDestination '4.1.10.27') @('config','logs','Cache') @('*.token','*.db','*.log','*.ini')
+Copy-Tree (Join-Path $clientPath $wechatVersion) (Join-Path $clientDestination $wechatVersion) @('config','logs','Cache') @('*.token','*.db','*.log','*.ini','WeixinUpdate.exe','WeixinUpdate.exe.disabled')
 # Never take the client root proxy DLL or its per-install authentication token.
-$hookRoot=Join-Path $resources 'vendor/hook'
-$hookBuild=Get-Content -LiteralPath (Join-Path $hookRoot 'build.json') -Raw|ConvertFrom-Json
-if($hookBuild.targetVersion -ne '4.1.10.27' -or (Get-FileHash -LiteralPath (Join-Path $hookRoot 'version.dll')).Hash.ToLowerInvariant() -ne $hookBuild.sha256){throw 'Hook version/hash mismatch.'}
+$hookDestination=Join-Path $resources 'vendor/hook-current'
+New-Item -ItemType Directory -Path $hookDestination -Force|Out-Null
+foreach($file in 'wechatagent-text-4.1.15.13.dll','wechatagent-text-loader.exe','build.json'){Copy-Item -LiteralPath (Join-Path $hookPath $file) -Destination $hookDestination}
 $oldExe=Join-Path $stage 'app/WeChatAgent.exe'
 $newExe=Join-Path $stage 'app/WeChatGirl.exe'
 if(Test-Path -LiteralPath $oldExe){Move-Item -LiteralPath $oldExe -Destination $newExe}
@@ -103,7 +120,7 @@ Get-ChildItem -LiteralPath $project -File -Recurse|Sort-Object FullName|ForEach-
 $seed=($hashes.GetEnumerator()|ForEach-Object{$_.Key+':'+$_.Value}) -join [Environment]::NewLine
 $sha=[Security.Cryptography.SHA256]::Create()
 try{$buildId=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($seed))).Replace('-','').ToLowerInvariant()).Substring(0,16)}finally{$sha.Dispose()}
-$manifest=[ordered]@{version=$Version;packageVersion=$Version;buildId=$buildId;builtAt=[DateTime]::UtcNow.ToString('o');runtimeRevision='db3bce768f85';wechatVersion='4.1.10.27';dshBundled=$false;pluginDistribution='core';essentialPlugins=@('people-memory','persona-studio');files=@($hashes.Keys);sourceHashes=$hashes}
+$manifest=[ordered]@{version=$Version;packageVersion=$Version;buildId=$buildId;builtAt=[DateTime]::UtcNow.ToString('o');runtimeRevision='db3bce768f85';wechatVersion=$wechatVersion;dshBundled=$false;pluginDistribution='core';essentialPlugins=@('people-memory','persona-studio');files=@($hashes.Keys);sourceHashes=$hashes}
 [IO.File]::WriteAllText((Join-Path $project 'deployment.json'),($manifest|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 & (Join-Path $repo 'scripts/build-launcher.ps1') -OutputPath (Join-Path $stage 'WeChatGirl.exe')
 $guide=@("WeChatGirl $Version | Windows 10/11 x64",'请先完整解压，再双击根目录 WeChatGirl.exe，无须打开命令窗口。','不要在压缩包中运行，也不要只复制一个 EXE。程序文件在 app，首次启动会在同级 data 保存配置。','DSH 需单独安装，请跟随首次配置向导完成连接。','需要本地语音时，在音乐页下载并导入语音组件 ZIP；组件不包含全部模型。','升级前保存设置并从托盘完整退出程序，保留原有 data。安装版使用 Windows 已安装的应用或 app/Uninstall WeChatGirl.exe 卸载；便携版退出后删除程序目录即可，数据需自行保留。') -join [Environment]::NewLine

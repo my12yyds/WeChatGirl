@@ -76,7 +76,7 @@ export function taskFailureMessage(output, code) {
   if (/HOOK_COMPONENT_UPDATE_PENDING/.test(output)) return '发送组件已更新。点击“修复微信连接”，核对并再次确认后重开匹配微信以应用更新。';
   if (/CouldNotAutoloadMatchingModule|Microsoft\.PowerShell\.Security.*module|Get-AuthenticodeSignature.*ObjectNotFound/is.test(output)) return 'Windows PowerShell 安全模块未能加载。请退出应用后重新打开更新后的 WeChatGirl.exe。';
   if (/WECHAT_LAUNCH_EXITED/i.test(output)) return '微信启动后已退出。若微信提示必须升级，当前固定版本的发送组件需要重新适配；请保留完整微信提示。';
-  if (/HOOK_VERSION_MISMATCH|Client version mismatch/i.test(output)) return '微信版本与发送组件不匹配，请在连接设置中选择匹配的微信程序。';
+  if (/HOOK_VERSION_MISMATCH|HOOK_PROFILE_MISMATCH|Client version mismatch|Native text component hash\/profile mismatch/i.test(output)) return '微信版本与发送组件不匹配，请在连接设置中选择匹配的微信程序。';
   if (/HOOK_LOGIN_REQUIRED/i.test(output)) return '发送组件已连接，但微信尚未打开账号数据库。请完成登录并等待聊天同步，然后重试。';
   if (/HOOK_MULTIPLE_ACCOUNT_DATABASES/i.test(output)) return '匹配微信进程仍打开多个账号的数据库。点击“修复微信连接”，核对并再次确认后重开匹配微信，再登录目标账号。';
   if (/HOOK_ACCOUNT_MISMATCH/i.test(output)) return '微信当前账号与所选数据库不一致。请重新选择当前账号，或在微信切换到所选账号后重试。';

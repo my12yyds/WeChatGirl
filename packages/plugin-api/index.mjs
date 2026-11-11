@@ -15,6 +15,7 @@ import {assistantSenderAllowed} from '../dsh-social-bridge-plugin/assistant-poli
 import {boundedTask} from '../dsh-social-bridge-plugin/deadline.mjs';
 import {dailyScheduleIdentity,scheduleCompleted} from './daily-schedule.mjs';
 import {VoiceJobs,voiceRequest} from '../voice-studio/jobs.mjs';
+import {validMention} from '../../components/qq-bridge/src/core/group-mentions.js';
 import {SavedSongs} from '../voice-studio/saved-songs.mjs';
 import {createAudioReader} from './audio.mjs';
 export {createPluginModelUtility} from './model-utility.mjs';
@@ -239,7 +240,11 @@ export class PluginRuntime{
   commitVoice(turn,signal){
     if(signal?.aborted||!Array.isArray(turn.voiceRequests)||!turn.voiceRequests.length)return [];
     const staged=turn.voiceRequests.splice(0),queued=[];
-    for(let index=0;index<staged.length;index++){const item=staged[index],record=this.records?.get(item.id);if(!record||record.generation!==item.generation||!this.active(record,turn.conversationKey,'voice'))continue;try{queued.push({...this.voiceJobs.queue({key:turn.conversationKey,pluginId:item.id,generation:item.generation,batchId:turn.batchId??turn.sessionId??'turn-'+this.now(),request:item.request,index,fallbackText:item.fallbackText}),fallbackText:item.fallbackText});if(item.replacement&&item.cooldownKey)this.voiceCooldown?.set(item.cooldownKey,this.now()+item.cooldownMs);}catch(error){this.log(`[plugin:${item.id}] voice queue: ${error.message}`);}}
+    const actor=turn.actorId;
+    const observation=typeof actor==='string'&&actor&&turn.conversationKey?.startsWith('wechat:group:')&&Array.isArray(turn.peopleObservations)
+      ?turn.peopleObservations.find(row=>row?.senderId===actor&&row.memberId===hash('wechat-member:'+actor)):null;
+    const mention=observation?{wxid:actor,name:observation.name,id:String(BigInt('0x'+hash(actor).slice(0,16))%2147483647n+1n)}:null;
+    for(let index=0;index<staged.length;index++){const item=staged[index],record=this.records?.get(item.id);if(!record||record.generation!==item.generation||!this.active(record,turn.conversationKey,'voice'))continue;try{queued.push({...this.voiceJobs.queue({key:turn.conversationKey,pluginId:item.id,generation:item.generation,batchId:turn.batchId??turn.sessionId??'turn-'+this.now(),request:item.request,index,fallbackText:item.fallbackText,...(item.id==='voice-studio'&&item.request.kind==='song'&&validMention(mention)?{requester:mention}:{})}),fallbackText:item.fallbackText});if(item.replacement&&item.cooldownKey)this.voiceCooldown?.set(item.cooldownKey,this.now()+item.cooldownMs);}catch(error){this.log(`[plugin:${item.id}] voice queue: ${error.message}`);}}
     turn.queuedVoiceRequests=queued;return queued;
   }
   voiceReplyText(turn,source){let output=String(source??'');for(const job of turn.queuedVoiceRequests??[]){const text=job.fallbackText;if(text&&job.state==='queued')output=output.replace(text,'');}return output;}

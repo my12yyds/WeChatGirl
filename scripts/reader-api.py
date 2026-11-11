@@ -380,7 +380,7 @@ class Reader:
             # Preserve complete text: the upstream CLI display truncates to 200.
             table = 'Msg_' + hashlib.md5(talker.encode()).hexdigest()
             for message in data.get('messages', []):
-                if message.get('localType') not in (1, 34, PAT_TYPE, 49, FORWARD_TYPE, QUOTE_TYPE, 47, APPMSG_STICKER_TYPE, FILE_TYPE):
+                if message.get('localType') not in (1, 3, 34, PAT_TYPE, 49, FORWARD_TYPE, QUOTE_TYPE, 47, APPMSG_STICKER_TYPE, FILE_TYPE):
                     continue
                 for connection in connections:
                     if table not in nt.msg_tables(connection):
@@ -390,7 +390,17 @@ class Reader:
                         (message['localId'], message['createTime'], message['serverId'] or 0)).fetchone()
                     if row:
                         text = nt._decode_content(row[0])
+                        if message.get('localType') == 3:
+                            tag = re.search(r'<img\s+[^<>]{1,8192}>', text) if message.get('isSend') else None
+                            md5 = re.search(r'''\smd5=["']([a-fA-F0-9]{32})["']''', tag.group()) if tag else None
+                            if md5:
+                                message['imageMd5'] = md5.group(1).lower()
+                            break
                         message['fullText'] = nt._strip_group_speaker(text, set(self.names) | {message['senderUsername']}) if '@chatroom' in talker else text
+                        if message.get('isSend') and message.get('localType') in (49, QUOTE_TYPE):
+                            quote = parse_quote_reply(message['fullText'])
+                            if quote:
+                                message['quoteReceipt'] = {'text': quote['reply'], 'sourceId': quote['reference']['messageId']}
                         file_info=parse_file_message(message.get('localType'),message['fullText'])
                         if file_info:
                             message.update({'fileKind':'appmsg-6','fileName':file_info['name'],'fileSize':file_info['size'],'fileMd5':file_info['md5']})

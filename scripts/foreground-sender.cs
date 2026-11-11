@@ -12,6 +12,7 @@ public static class WhaleForeground {
   static Random random=new Random();
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
   [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hwnd,int command);
   [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hwnd);
@@ -176,12 +177,91 @@ public static class WhaleForeground {
   static string ReadInput(AutomationElement input) {
     return ((ValuePattern)input.GetCurrentPattern(ValuePattern.Pattern)).Current.Value;
   }
+  public static bool SendAttachment(string exe,string name,string file) {
+    file=System.IO.Path.GetFullPath(file);
+    if(!System.IO.File.Exists(file))throw new Exception("FOREGROUND_ATTACHMENT_MISSING");
+    string filename=System.IO.Path.GetFileName(file);
+    var root=OpenChat(exe,name);var handle=new IntPtr(root.Current.NativeWindowHandle);
+    var input=EmptyInput(root,name);
+    input.SetFocus();
+    if(GetForegroundWindow()!=handle||!input.Current.HasKeyboardFocus)throw new Exception("FOREGROUND_FOCUS_CHANGED");
+    var previous=Clipboard.GetDataObject();
+    var drop=new System.Collections.Specialized.StringCollection();drop.Add(file);
+    try {
+      Clipboard.SetFileDropList(drop);
+      uint stagedClipboard=GetClipboardSequenceNumber();
+      if(GetForegroundWindow()!=handle||!input.Current.HasKeyboardFocus||input.Current.Name!=name||ReadInput(input)!="")throw new Exception("FOREGROUND_TARGET_CHANGED");
+      SendKeys.SendWait("^v");
+      for(int attempt=0;attempt<25;attempt++){
+        if(GetForegroundWindow()!=handle||input.Current.Name!=name)throw new Exception("FOREGROUND_TARGET_CHANGED");
+        if(GetClipboardSequenceNumber()!=stagedClipboard)throw new Exception("FOREGROUND_CLIPBOARD_CHANGED");
+        // Qt 4.1.15.13 exposes a pasted file as one inline object, without its filename.
+        // The input was empty before the single-file clipboard paste.
+        bool verified=ReadInput(input)=="\uFFFC"||Controls(input).Any(e=>Visible(e)&&e.Current.ControlType!=ControlType.Edit&&e.Current.Name==filename);
+        if(verified){
+          if(ClickInWindow(SendButton(root),handle,true))return true;
+          if(!input.Current.HasKeyboardFocus)throw new Exception("FOREGROUND_FOCUS_CHANGED");
+          Attempted=true;SendKeys.SendWait("{ENTER}");return true;
+        }
+        Thread.Sleep(100);
+      }
+      throw new Exception("FOREGROUND_ATTACHMENT_NOT_VERIFIED");
+    } finally {
+      try{
+        var current=Clipboard.GetFileDropList();
+        if(current.Count==1&&current[0]==file){
+          if(previous!=null)Clipboard.SetDataObject(previous,true);else Clipboard.Clear();
+        }
+      }catch{}
+    }
+  }
   static AutomationElement SendButton(AutomationElement root) {
     var buttons=root.FindAll(TreeScope.Descendants,new AndCondition(
       new PropertyCondition(AutomationElement.NameProperty,"发送"),
       new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Button)))
       .Cast<AutomationElement>().Where(button=>Visible(button)&&button.Current.IsEnabled).ToArray();
     return buttons.Length==1?buttons[0]:null;
+  }
+  static bool HasQuote(AutomationElement root,string text){
+    return Controls(root).Any(e=>Visible(e)&&e.Current.Name.StartsWith("引用 ",StringComparison.Ordinal)&&
+      (text==null||e.Current.Name.EndsWith(" 的消息 : "+text,StringComparison.Ordinal)));
+  }
+  public static bool SendQuote(string exe,string name,string text,string original){
+    if(String.IsNullOrEmpty(original)||original.Length>500||original.Contains("\n"))throw new Exception("FOREGROUND_QUOTE_INVALID");
+    var root=OpenChat(exe,name);var handle=new IntPtr(root.Current.NativeWindowHandle);
+    var input=EmptyInput(root,name);
+    if(HasQuote(root,null))throw new Exception("FOREGROUND_DRAFT_PRESENT");
+    var bubbles=Controls(root).Where(e=>Visible(e)&&e.Current.AutomationId.EndsWith(".chat_bubble_item_view",StringComparison.Ordinal)&&e.Current.Name==original).ToArray();
+    if(bubbles.Length!=1)throw new Exception("FOREGROUND_QUOTE_TARGET_NOT_UNIQUE");
+    System.Windows.Point point;
+    if(!bubbles[0].TryGetClickablePoint(out point))throw new Exception("FOREGROUND_QUOTE_TARGET_UNCLICKABLE");
+    var hit=new ScreenPoint {X=(int)point.X,Y=(int)point.Y};
+    if(GetForegroundWindow()!=handle||GetAncestor(WindowFromPoint(hit),2)!=handle||!SetCursorPos(hit.X,hit.Y)||GetForegroundWindow()!=handle)throw new Exception("FOREGROUND_TARGET_CHANGED");
+    mouse_event(8,0,0,0,UIntPtr.Zero);mouse_event(16,0,0,0,UIntPtr.Zero);
+    AutomationElement menu=null;
+    for(int i=0;i<15&&menu==null;i++){
+      var process=AutomationElement.FromHandle(GetForegroundWindow());
+      if(process.Current.ProcessId!=root.Current.ProcessId)throw new Exception("FOREGROUND_FOCUS_CHANGED");
+      var found=Controls(process).Where(e=>Visible(e)&&e.Current.Name=="引用"&&e.Current.AutomationId=="XMenuItem").ToArray();
+      if(found.Length==1)menu=found[0];
+      Thread.Sleep(70);
+    }
+    if(menu==null)throw new Exception("FOREGROUND_QUOTE_MENU_UNAVAILABLE");
+    var menuRect=menu.Current.BoundingRectangle;
+    var menuPoint=new ScreenPoint {X=(int)(menuRect.Left+menuRect.Width/2),Y=(int)(menuRect.Top+menuRect.Height/2)};
+    var menuWindow=WindowFromPoint(menuPoint);
+    var menuHit=AutomationElement.FromHandle(menuWindow);
+    if(menuHit==null||menuHit.Current.ProcessId!=root.Current.ProcessId||!SetCursorPos(menuPoint.X,menuPoint.Y))throw new Exception("FOREGROUND_QUOTE_MENU_UNAVAILABLE");
+    mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);
+    for(int i=0;i<15&&!HasQuote(root,original);i++)Thread.Sleep(70);
+    if(GetForegroundWindow()!=handle||input.Current.Name!=name||!HasQuote(root,original)||ReadInput(input)!="")throw new Exception("FOREGROUND_QUOTE_PREVIEW_MISMATCH");
+    input.SetFocus();Fill(input,text);
+    if(GetForegroundWindow()!=handle||input.Current.Name!=name||ReadInput(input)!=text||!HasQuote(root,original))throw new Exception("FOREGROUND_QUOTE_PREVIEW_MISMATCH");
+    if(!ClickInWindow(SendButton(root),handle,true)){
+      if(!input.Current.HasKeyboardFocus)throw new Exception("FOREGROUND_FOCUS_CHANGED");
+      Attempted=true;SendKeys.SendWait("{ENTER}");
+    }
+    return true;
   }
   static bool Visible(AutomationElement e){var r=e.Current.BoundingRectangle;return !e.Current.IsOffscreen&&!r.IsEmpty&&r.Width>=16&&r.Height>=16;}
   static AutomationElement[] Controls(AutomationElement root){return root.FindAll(TreeScope.Descendants,Condition.TrueCondition).Cast<AutomationElement>().ToArray();}
@@ -196,9 +276,15 @@ public static class WhaleForeground {
   }).ToArray();}
   public static bool SendFavorite(string exe,string name){
     var root=OpenChat(exe,name);EmptyInput(root,name);
-    var launcher=Controls(root).FirstOrDefault(e=>Visible(e)&&(e.Current.AutomationId=="chat_text_emoticon_view"||e.Current.Name=="发送表情"||e.Current.Name=="表情"||e.Current.ClassName=="mmui::EmoticonView"));
+    var launcher=Controls(root).FirstOrDefault(e=>Visible(e)&&(e.Current.AutomationId=="chat_text_emoticon_view"||e.Current.Name=="发送表情"||e.Current.Name=="发送表情(Alt+E)"||e.Current.Name=="表情"||e.Current.ClassName=="mmui::EmoticonView"));
     var panel=Panel(root);
-    if(panel==null){if(launcher==null||!Click(launcher))throw new Exception("FOREGROUND_STICKER_PANEL_UNAVAILABLE");Thread.Sleep(400);panel=Panel(root);}
+    if(panel==null){
+      var handle=new IntPtr(root.Current.NativeWindowHandle);
+      if(launcher==null||GetForegroundWindow()!=handle)throw new Exception("FOREGROUND_STICKER_PANEL_UNAVAILABLE");
+      if(launcher.Current.Name=="发送表情(Alt+E)")SendKeys.SendWait("%e");
+      else if(!ClickInWindow(launcher,handle,false))throw new Exception("FOREGROUND_STICKER_PANEL_UNAVAILABLE");
+      for(int attempt=0;attempt<10&&panel==null;attempt++){Thread.Sleep(100);panel=Panel(root);}
+    }
     if(panel==null)throw new Exception("FOREGROUND_STICKER_PANEL_UNAVAILABLE");
     var items=Favorites(panel,false);
     if(items.Length==0){

@@ -2,7 +2,7 @@
 
 版本：1.1.0 · 可选插件，按需安装
 
-[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.5/admin-dsh-1.1.0.zip)
+[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.7/admin-dsh-1.1.0.zip)
 
 ## 适合做什么
 

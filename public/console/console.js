@@ -424,7 +424,7 @@ function connectionsPage() {
   const r = state.reader;
   state.readerDraft ??= { dbPath: r?.dbPath ?? '', myWxid: r?.myWxid ?? '', decryptKey: '' };
   return `<div class="section-stack">${dshModels.card()}${dshModels.visionCard()}<section class="card">${header('模型连接', '使用你已在 DSH 中配置的模型。', '', 'plug')}<div class="form-grid">${field('DSH 程序位置', 'runtime.dshDesktop', { full: true, browse: 'exe', placeholder: '选择 DeepSeek Harness.exe', help: '启动时若 DSH 尚未打开，会尝试打开这个程序。' })}</div>${pluginPathField()}<div class="notice plain">${icon('info')}<span>模型从 DSH 列表选择并保存后，下一次请求生效，无需重开 DSH。</span></div></section>
-    ${wechatClientsCard()}<section class="card">${header('微信与读取程序', '选择本机已准备的程序。', '', 'chat')}<div class="form-grid">${field('匹配微信程序位置', 'hook.wechatExecutable', { full: true, browse: 'exe', help: '自动检测结果见上方版本卡。完整收发使用内置 4.1.10.27 x64，其他版本不会套用此工具。' })}${field('Python 程序位置', 'runtime.python', { full: true, browse: 'exe', help: '选择已有环境的 python.exe，也可填写可用的 Python 命令。' })}</div></section>
+    ${wechatClientsCard()}<section class="card">${header('微信与读取程序', '选择本机已准备的程序。', '', 'chat')}<div class="form-grid">${field('匹配微信程序位置', 'hook.wechatExecutable', { full: true, browse: 'exe', help: '自动检测结果见上方版本卡。内置匹配版为 4.1.15.13 x64。版本卡会分别核验客户端和对应组件。' })}${field('Python 程序位置', 'runtime.python', { full: true, browse: 'exe', help: '选择已有环境的 python.exe，也可填写可用的 Python 命令。' })}</div></section>
     ${readerConfigurationCard()}
     <section class="card">${header('高级连接选项', '通常无需修改。端口需要互不重复。', '', 'sliders')}<details><summary>展开端口与发送超时设置</summary><div class="form-grid">${field('读取服务端口', 'ports.weflow', { type: 'number', min: 1024, max: 65535 })}${field('消息桥接端口', 'ports.onebot', { type: 'number', min: 1024, max: 65535 })}${field('适配器状态端口', 'ports.adapter', { type: 'number', min: 1024, max: 65535 })}${field('DSH 插件端口', 'ports.dshPlugin', { type: 'number', min: 1024, max: 65535 })}${field('发送后端地址', 'hook.baseUrl', { full: true, help: '必须为本机回环 HTTP 地址，例如 http://127.0.0.1:30001。' })}${field('发送请求超时 / 秒', 'hook.requestTimeoutMs', { type: 'number', transform: 'seconds', min: 1, max: 5, step: .1 })}${field('回执等待超时 / 秒', 'hook.receiptTimeoutMs', { type: 'number', transform: 'seconds', min: 1, max: 18, step: .1 })}${field('并发发送上限', 'hook.maxConcurrentSends', { type: 'number', min: 1, max: 4, step: 1 })}</div></details></section></div>`;
 }
@@ -459,7 +459,7 @@ function setupPage() {
   if(step==='start')content='<section class="card">'+header('让微信与模型连接起来','前三步检查通过后，启动读取、桥接和模型连接。','','power')+'<ul class="setup-checklist">'+progress.steps.slice(0,3).map(item=>'<li data-guide-check="'+item.id+'"><span class="status-tag '+(item.done?'ok':'warn')+'">'+(item.done?'已通过':'待完成')+'</span><button class="link-button" data-guide-step="'+item.id+'">'+escapeHtml(item.title)+'</button><small>'+escapeHtml(item.detail)+'</small></li>').join('')+'</ul><p id="guide-start-hint" class="card-description space-top"></p><div class="button-row space-top">'+save+'<button class="button primary" data-guide-start data-action="'+(state.status?.running||state.status?.pendingApply?'restart':'start')+'">'+(state.status?.running||state.status?.pendingApply?'应用设置并检查连接':'启动服务')+'</button><a class="button" href="#overview">查看连接详情</a></div><p class="subtle space-top">暂未选择聊天也可以先启动，以便下一步搜索好友或群聊；只会处理已加入允许范围的聊天。</p></section>';
   if(step==='chats')content='<section class="card">'+header('先选一个好友，试着聊起来','建议先用自己的另一个微信或熟悉的好友验证，再逐步加入群聊。','','users')+'<div class="setup-chat-count"><strong id="guide-saved-chat-count">'+progress.savedChats+'</strong><span id="guide-draft-chat-count">个聊天已保存 · 草稿共 '+progress.draftChats+' 个</span></div><div class="button-row space-top"><button class="button" data-guide-add="private">搜索并添加好友</button><button class="button" data-guide-add="groups">搜索并添加群聊</button></div><p class="card-description space-top">添加只会放入草稿。保存设置后，应用并重启服务，聊天范围才会生效。服务未启动时，先返回第四步。</p><div class="button-row space-top">'+save+'<button class="button" data-guide-start data-action="restart">应用设置并重启服务</button><a class="text-link" href="#chats">查看已选择的聊天</a></div></section><section class="card setup-test"><h3>最后，由你发一条“你好”</h3><ol><li>在刚才允许的微信聊天中发一条文字。</li><li>等待回复；群聊请先 @ 助手或使用已设置的唤醒词。</li><li>收到文字后，再测试表情和其他能力。</li></ol><p class="card-description">程序不会替你发送测试消息。配置检查通过代表连接已就绪，实际收发仍以微信中收到的回复为准。</p><div class="button-row space-top"><a class="button" href="#roles">选择或编辑人格</a><a class="button" href="#settings/assistant">设置管理员与执行权限</a></div><p class="subtle space-top">人格和执行权限都可以稍后配置。每个聊天的工具权限在“设置此聊天 → 能力与权限”中单独开启。</p></section>';
   if(step==='features')content='<section class="feature-setup-intro"><div><span class="eyebrow">可选设置</span><h2>按需配置功能</h2><p>基础聊天已经可以使用。选择需要的功能卡片继续设置；插件入口会打开对应插件的聊天分配页。</p></div></section><div id="feature-setup-list"></div>';
-  if(step==='sending')content='<section class="card"><h3>选择微信发送方式</h3><p class="card-description">前台模式功能较少，需要保持微信窗口可用；Hook 模式提供完整发送能力。两者都不能保证账号安全。</p><div class="button-row space-top"><button class="button primary" data-guide-save>保存发送模式</button><a class="button" href="#sending">打开发送模式详情</a></div></section>'+sendModeCard(state.draft.wechat.textTransport?.mode==='foreground'?'foreground':'native',header);
+  if(step==='sending')content='<section class="card"><h3>选择微信发送方式</h3><p class="card-description">前台模式功能较少，需要保持微信窗口可用；Hook 模式提供完整发送能力。两者都不能保证账号安全。</p><div class="button-row space-top"><button class="button primary" data-guide-save>保存发送模式</button><a class="button" href="#sending">打开发送模式详情</a></div></section>'+sendModeCard(state.draft.wechat.textTransport?.mode==='foreground'?'foreground':'native',header,state.draft.wechat.textTransport?.compatibilityMedia);
   return setupGuideFrame({progress,selected:step,content,esc:escapeHtml});
 }
 async function logsPage() {
@@ -487,7 +487,7 @@ async function renderPage() {
     if (page === 'memory') markup = await memoryUI.page();
     if (page === 'voice') markup = '<div id="voice-page" class="music-page"></div>';
     if (page === 'music') markup = '<div id="music-page" class="music-page"></div>';
-    if (page === 'sending') markup = '<div class="section-stack">'+sendModeCard(state.draft.wechat.textTransport?.mode==='foreground'?'foreground':'native',header)+'</div>';
+    if (page === 'sending') markup = '<div class="section-stack">'+sendModeCard(state.draft.wechat.textTransport?.mode==='foreground'?'foreground':'native',header,state.draft.wechat.textTransport?.compatibilityMedia)+'</div>';
     if (page === 'setup') { if(!$('#page-body .setup-guide')||!state.guideCatalog){const checks=await Promise.allSettled([api('/api/reader-config'),api('/api/dsh-models')]);if(checks[0].status==='fulfilled')state.reader=checks[0].value;if(checks[1].status==='fulfilled')state.guideCatalog=checks[1].value;else state.guideCatalog={available:false,models:[]};}markup=setupPage(); }
 
   } catch (error) {
@@ -630,16 +630,18 @@ async function inspectWeChatClients(force=false) {
   try{const data=await api('/api/wechat-clients'+(force?'?refresh=1':''));if(!host.isConnected)return;output.innerHTML=renderClientResult(data,escapeHtml);button.disabled=!data.bundled?.canLaunch;}
   catch(error){if(host.isConnected)output.textContent='微信版本检测未完成：'+error.message;}
 }
-async function openBundledWeChat(button) {
-  if(hasDraft())return toast('请先保存或放弃草稿，再选择内置微信。');
+async function openMatchingWeChat(button) {
+  if(hasDraft())return toast('请先保存或放弃草稿，再选择微信。');
   if(state.job?.state==='running')return toast('请等待当前操作完成。');
   button.disabled=true;
   try{
-    const data=await api('/api/wechat-clients?refresh=1'),client=data.bundled;
-    if(!client?.canLaunch)throw Error(client?.status??'内置匹配微信缺失，请重新安装程序并保留 data。');
-    if(!client.configured){
-      if(state.status?.running)throw Error('请先停止助手服务，再切换到内置微信。');
-      const config=structuredClone(state.config);config.hook.wechatExecutable=client.path;config.hook.expectedVersion=data.expectedVersion;
+    const data=await api('/api/wechat-clients?refresh=1'),selected=button.dataset.wechatCompatibleOpen;
+    const client=selected?data.clients.find(row=>row.path===selected&&row.version==='4.1.15.13'):data.bundled;
+    if(!client?.canLaunch)throw Error(client?.status??'未找到已通过校验的微信，请重新检测。');
+    if(data.clients.some(row=>row.running&&row.path!==client.path))throw Error('请先从系统托盘退出正在运行的其他微信，再切换。');
+    if(!client.configured||state.config.hook.expectedVersion!==client.version){
+      if(state.status?.running)throw Error('请先停止助手服务，再切换微信。');
+      const config=structuredClone(state.config);config.hook.wechatExecutable=client.path;config.hook.expectedVersion=client.version;
       const result=await api('/api/config',{config,revision:state.revision});state.config=result.config;state.draft=structuredClone(result.config);state.revision=result.revision;updateDraftUI();
     }
     await runAction('wechat-open');
@@ -764,8 +766,8 @@ document.addEventListener('change', event => {
   }
 });
 document.addEventListener('click', event => {
-  const clientAction=event.target.closest('[data-wechat-client-refresh],[data-wechat-bundled-open]');
-  if(clientAction){if(clientAction.hasAttribute('data-wechat-client-refresh'))void inspectWeChatClients(true);else void openBundledWeChat(clientAction);return;}
+  const clientAction=event.target.closest('[data-wechat-client-refresh],[data-wechat-bundled-open],[data-wechat-compatible-open]');
+  if(clientAction){if(clientAction.hasAttribute('data-wechat-client-refresh'))void inspectWeChatClients(true);else void openMatchingWeChat(clientAction);return;}
   const pluginRoute=event.target.closest('a[data-plugin-config-route]');if(pluginRoute){state.pluginReturnHash='#setup/features';return;}
   const button = event.target.closest('button'); if (!button) return;
   if(button.dataset.guideStep){if(state.setupStep===button.dataset.guideStep&&state.page==='setup')return;if(guideProgress().steps.some(step=>step.id===button.dataset.guideStep)){state.setupStep=button.dataset.guideStep;location.hash='#setup/'+button.dataset.guideStep;}return;}

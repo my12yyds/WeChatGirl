@@ -6,6 +6,7 @@ import {windowsPowerShellExecutable} from './console-process.mjs';
 export function validateTextTransport(value) {
   if(value===undefined)return;
   if(!value||!['native','foreground'].includes(value.mode??'native'))throw Error('请选择有效的文字发送方式。');
+  if(value.compatibilityMedia!==undefined&&typeof value.compatibilityMedia!=='boolean')throw Error('微信兼容发送必须使用开关值。');
 }
 
 // A single process and queue owns the UI. Never retry or change transports after submission.

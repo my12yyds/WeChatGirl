@@ -24,7 +24,7 @@
 
 在已审计的 Windows x64 发行目录上，运行 `scripts/sync-and-package.ps1`。它只向新的隔离暂存目录复制程序与运行资源，以 Git 审核文件集填充源码，重新生成部署清单，再构建便携包、安装器、可选语音 ZIP 和 SHA256。当前脚本不更新活动安装、不复制基线的工作区、账号设置、桌面会话或 state，也不强制退出程序。
 
-首次使用或更换来源时显式传入 `-Version`、`-Baseline`、`-ClientRoot`、`-StagingDirectory` 和 `-OutputDirectory`。客户端 EXE、核心 DLL 与 Hook 构建记录需精确匹配 4.1.10.27，并核验 Hook 哈希；客户端根目录的代理 DLL 和本机令牌不复制。脚本拒绝覆盖已有暂存与输出目录，构建后仍需检查归档与 SHA256。
+首次使用或更换来源时显式传入 `-Version`、`-Baseline`、`-ClientRoot`、`-HookRoot`、`-StagingDirectory` 和 `-OutputDirectory`。客户端 EXE、核心 DLL 与发送组件构建记录需精确匹配 4.1.15.13，并核验腾讯签名、x64 架构、DLL 与加载器哈希，以及语音组件标记；客户端根目录的代理 DLL 和本机令牌不复制。脚本拒绝覆盖已有暂存与输出目录，构建后仍需检查归档与 SHA256。
 
 如果只需从已有 DDF 测量语音拆分效果，可运行：
 

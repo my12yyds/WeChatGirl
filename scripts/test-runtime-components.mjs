@@ -36,3 +36,27 @@ test('first deployment copies the native reader file into the actual workspace a
  await bootstrapDeployment(resources,home);const deployed=path.join(home,'workspace',relative);assert.deepEqual(fs.readFileSync(deployed),b);
  const settings=path.join(home,'workspace/config/wechatagent.json');const config=JSON.parse(fs.readFileSync(settings));config.userFixture='preserve';write(settings,JSON.stringify(config));fs.unlinkSync(deployed);await bootstrapDeployment(resources,home);assert.deepEqual(fs.readFileSync(deployed),b);assert.equal(JSON.parse(fs.readFileSync(settings)).userFixture,'preserve');
 });
+test('4.1.15.13 first deployment installs the matching client and verified sender while upgrades retain the selected client',async t=>{
+ const root=fixture(t),resources=path.join(root,'resources'),project=path.join(resources,'project'),home=path.join(root,'data');
+ const files=['config/wechatagent.example.json'];
+ write(path.join(project,files[0]),JSON.stringify({runtime:{},hook:{expectedVersion:'4.1.10.27',wechatExecutable:'old/Weixin.exe'}}));
+ write(path.join(project,'deployment.json'),JSON.stringify({version:'0.5.6',wechatVersion:'4.1.15.13',runtimeRevision:'fixture',dshBundled:false,files}));
+ write(path.join(resources,'runtime/python/python.exe'),'python');write(path.join(resources,'runtime/node.exe'),'node');
+ write(path.join(resources,'vendor/wechat/Weixin.exe'),'client');
+ write(path.join(resources,'vendor/wechat/4.1.15.13/Weixin.dll'),'client-core');
+ const sender=Buffer.from('verified-sender'),loader=Buffer.from('verified-loader'),native=path.join(resources,'vendor/hook-current');
+ write(path.join(native,'wechatagent-text-4.1.15.13.dll'),sender);write(path.join(native,'wechatagent-text-loader.exe'),loader);
+ write(path.join(native,'build.json'),JSON.stringify({targetVersion:'4.1.15.13',profile:'4.1.15.13-media-mentions-v2',loaderInit:'worker-path-v1',voiceProfile:'recording-factory-v1',sha256:hash(sender),loaderSha256:hash(loader)}));
+ await bootstrapDeployment(resources,home);
+ const workspace=path.join(home,'workspace'),configFile=path.join(workspace,'config/wechatagent.json');
+ let config=JSON.parse(fs.readFileSync(configFile));
+ assert.equal(config.hook.expectedVersion,'4.1.15.13');
+ assert.equal(config.hook.wechatExecutable.replaceAll('\\','/'),'state/hook/wechat-4.1.15.13/Weixin.exe');
+ assert.deepEqual(fs.readFileSync(path.join(workspace,'state/hook/native-4.1.15.13/wechatagent-text-4.1.15.13.dll')),sender);
+ assert(!fs.existsSync(path.join(workspace,'state/hook/native/version.dll')));
+ config.hook={expectedVersion:'4.1.10.27',wechatExecutable:'owner-choice/Weixin.exe'};write(configFile,JSON.stringify(config));
+ await bootstrapDeployment(resources,home);
+ assert.deepEqual(JSON.parse(fs.readFileSync(configFile)).hook,config.hook);
+ write(path.join(native,'wechatagent-text-loader.exe'),'corrupt-loader');
+ await assert.rejects(bootstrapDeployment(resources,home),/发送组件校验失败/);
+});

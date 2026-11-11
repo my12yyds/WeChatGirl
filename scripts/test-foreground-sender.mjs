@@ -29,3 +29,22 @@ test('a definitive foreground failure retains its reason and is not replayed',as
  for(let attempt=0;attempt<2;attempt++)await assert.rejects(hook.send('private','42','hello','a'),/FOREGROUND_SEND_BUTTON_UNAVAILABLE/);
  assert.deepEqual(calls,{native:0,foreground:1});
 });
+test('4.1.15.13 quote delivery requires the exact original server ID and submits only once',async t=>{
+ const {hook,calls}=fixture(t);
+ hook.project.hook={expectedVersion:'4.1.15.13'};
+ hook.project.wechat.textTransport={mode:'native',compatibilityMedia:true};
+ const rows=[{localId:1,localType:1,serverId:'1234',fullText:'original'}];
+ hook.messages=async()=>rows;
+ hook.foreground.send=async(body,before)=>{
+  await before();calls.foreground++;assert.equal(body.quote,'original');
+  const row={isSend:true,localType:49,createTime:Date.now()/1000};
+  rows.push({...row,localId:2,serverId:'1235',quoteReceipt:{sourceId:'999',text:'hello'}},
+    {...row,localId:3,serverId:'1236',quoteReceipt:{sourceId:'1234',text:'hello'}});
+  return {accepted:true,attempted:true};
+ };
+ const send=()=>hook.send('private','42','hello','quote-1',null,undefined,'1234');
+ assert.equal((await send()).message_id,3);
+ assert.equal((await send()).reused,true);
+ await assert.rejects(hook.send('private','42','hello','quote-1',null,undefined,'1235'),/TEXT_DELIVERY_ID_CONFLICT/);
+ assert.deepEqual(calls,{foreground:1,native:0});
+});

@@ -67,6 +67,7 @@ export const readerSetupMessages = {
   HOOK_HEALTH_INVALID_RESPONSE: '微信发送端口返回了无效响应，原配置已保留。请检查端口或修复微信连接。',
   HOOK_INITIALIZATION_TIMEOUT: '匹配微信发送组件未能完成初始化。请使用“修复微信连接”，核对并确认后重开。',
   HOOK_VERSION_MISMATCH: '微信版本与当前发送组件不匹配，原配置已保留。请使用项目匹配的微信客户端。',
+  HOOK_PROFILE_MISMATCH: '当前微信加载的发送组件版本不匹配。请从托盘退出微信，再通过配置向导打开匹配客户端。',
   REVIEWED_HOOK_BUILD_REQUIRED: '当前端口不是已适配的微信发送组件，原配置已保留。请检查端口和匹配微信。',
   READER_KEY_ACCESS_DENIED: '无法连接微信进程。请以相同的 Windows 用户和权限打开微信与助手后重试。',
   READER_SETUP_TIMEOUT: '获取密钥超时。请再次点击“一键连接并验证”，然后在微信中退出账号并重新登录；程序会等待登录完成。',

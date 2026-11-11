@@ -2,7 +2,7 @@
 
 版本：1.3.0 · 基础插件，随主包提供
 
-[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.5/people-memory-1.3.0.zip)
+[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.7/people-memory-1.3.0.zip)
 
 ## 适合做什么
 
