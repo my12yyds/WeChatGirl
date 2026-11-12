@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const validRejection=value=>value===undefined||value&&typeof value==='object'&&
-  /^(NATIVE_SEND_REJECTED|API_HTTP_(400|401|403|409|429)|FOREGROUND_[A-Z_]{1,64})$/.test(value.code??'')&&
+  /^(NATIVE_(?:SEND|STICKER)_REJECTED|API_HTTP_(400|401|403|409|429)|FOREGROUND_[A-Z_]{1,64})$/.test(value.code??'')&&
   Number.isSafeInteger(value.at)&&value.at>=0&&(value.nativeRet===undefined||Number.isSafeInteger(value.nativeRet));
 export class TextDeliveryStore {
   constructor(directory){this.directory=directory;}

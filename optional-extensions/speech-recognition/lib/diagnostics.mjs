@@ -1,11 +1,16 @@
 import fs from 'node:fs';
-import {endpointUrl,resolveApi,requestHeaders,limitedBody,validateConfig,requestFor,transcribeAudio,voiceErrorCode} from './recognize.mjs';
+import {endpointUrl,resolveApi,requestHeaders,limitedBody,validateConfig,requestFor,transcribeAudio,voiceErrorCode,recognitionConfig} from './recognize.mjs';
 
 export const EXPECTED_SAMPLE = '语音识别测试';
 const safeId = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\x00-\x20\x7f<>"'`]/.test(value) && !/^https?:\/\//i.test(value);
 const clean = value => String(value??'').replace(/[\x00-\x1f\x7f]/g,'').slice(0,200);
 export const errorMessages = Object.freeze({
   VOICE_API_NOT_CONFIGURED:'请先填写完整的识别接口地址。',VOICE_API_ENDPOINT_INVALID:'接口地址需要 HTTPS；本机服务也可使用 HTTP。',
+  VOICE_LOCAL_ENDPOINT_REQUIRED:'本机识别只允许使用 127.0.0.1、localhost 或 ::1。请填写本机 whisper-server 的地址。',
+  VOICE_SENSEVOICE_NOT_READY:'本机 SenseVoice 运行环境尚未安装或无法启动。请先准备模型和 sherpa-onnx，再检测。',
+  VOICE_SENSEVOICE_FAILED:'本机 SenseVoice 转写失败。请检查模型文件与 Python 组件版本，再用短句重试。',
+  VOICE_SENSEVOICE_LANGUAGE_INVALID:'SenseVoice 语言请填 auto、zh、en、yue、ja 或 ko，也可留空自动识别。',
+  VOICE_SENSEVOICE_BUSY:'本机语音识别正忙，请等当前语音处理完成后重试。',
   VOICE_API_KEY_INVALID:'密钥格式无效，请粘贴原始 API Key，去除换行和鉴权前缀。',
   VOICE_MODEL_REQUIRED:'请先选择或填写识别模型 ID，不能将空模型配置启用。',
   VOICE_API_PROTOCOL_MISMATCH:'完整接口路径与所选协议不一致，请填写对应的服务基础地址或完整识别路径。',
@@ -68,6 +73,8 @@ export function normalizeModels(body,path='data') {
 }
 
 export async function discoverModels(config,{signal,fetchImpl=fetch}={}){
+  if(config.apiProtocol==='local-sensevoice')return {ok:false,code:'VOICE_MODELS_UNSUPPORTED',message:'使用本机 SenseVoice 模型，可以直接检测转写。',models:[]};
+  if(config.apiProtocol==='local-whisper')return {ok:false,code:'VOICE_MODELS_UNSUPPORTED',message:'本机模型由 whisper-server 的 -m 参数选择，请直接检测识别。',models:[]};
   try{
     const urls=modelsCandidates(config),combined=AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(Math.min(config.timeoutMs??20000,12000))]);
     const headers=requestHeaders(config);headers.delete('content-type');
@@ -90,10 +97,20 @@ export function sampleAudio(){
 
 export function inspectConfiguration(config,capabilities={},models=[]){
   const checks=[];let configurationValid=true;
-  try{validateConfig(config);requestFor(config,sampleAudio());checks.push({id:'configuration',state:'ok',message:'接口与请求设置格式有效。'});}
+  if(config.apiProtocol==='local-sensevoice'){
+    const languageOk=['','auto','zh','en','yue','ja','ko'].includes(config.language??'');
+    const ready=capabilities.senseVoice;
+    const code=!languageOk?'VOICE_SENSEVOICE_LANGUAGE_INVALID':ready===false?'VOICE_SENSEVOICE_NOT_READY':undefined;
+    checks.push({id:'configuration',state:code?'error':ready?'ok':'pending',code,message:code?errorMessage(code):'使用本机 SenseVoice，音频在本机转写。'});
+    checks.push({id:'decoder',state:capabilities.decoder?'ok':capabilities.checked?'error':'pending',message:capabilities.decoder?'微信语音转 WAV 组件已就绪。':errorMessage('VOICE_DECODER_MISSING')});
+    return {configurationValid:!code,decoderReady:capabilities.decoder===true,checks};
+  }
+  const local=config.apiProtocol==='local-whisper';
+  try{config=recognitionConfig(config);validateConfig(config);requestFor(config,sampleAudio());checks.push({id:'configuration',state:'ok',message:local?'本机 Whisper 地址与 WAV 请求格式有效。':'接口与请求设置格式有效。'});}
   catch(error){configurationValid=false;const code=voiceErrorCode(error);checks.push({id:'configuration',state:'error',code,message:errorMessage(code)});}
-  const decoderReady=config.audioFormat==='silk'||capabilities.decoder===true;
-  checks.push({id:'decoder',state:decoderReady?'ok':capabilities.checked?'error':'pending',code:decoderReady?undefined:'VOICE_DECODER_MISSING',message:config.audioFormat==='silk'?'原始 SILK 无需 WAV 转换组件。':decoderReady?'微信语音转 WAV 组件已就绪。':capabilities.checked?errorMessage('VOICE_DECODER_MISSING'):'WAV 转换组件尚未检查。'});
+  const decoderReady=!local&&config.audioFormat==='silk'||capabilities.decoder===true;
+  checks.push({id:'decoder',state:decoderReady?'ok':capabilities.checked?'error':'pending',code:decoderReady?undefined:'VOICE_DECODER_MISSING',message:!local&&config.audioFormat==='silk'?'原始 SILK 无需 WAV 转换组件。':decoderReady?'微信语音转 WAV 组件已就绪。':capabilities.checked?errorMessage('VOICE_DECODER_MISSING'):'WAV 转换组件尚未检查。'});
+  if(local)return {configurationValid,decoderReady,checks};
   const selected=models.find(item=>item.id===config.model);
   checks.push({id:'model',state:selected?'ok':config.model?'warning':'pending',message:selected?'所选模型由接口模型列表返回。':config.model?'模型 ID 尚未由接口列表确认，可测试识别验证。':'尚未指定模型，将按接口的默认模型规则处理。'});
   if(selected?.audioDeclared===false)checks.push({id:'audio-model',state:'warning',message:'模型列表未声明此模型支持音频，需要测试识别确认。'});
@@ -107,8 +124,8 @@ export function inspectConfiguration(config,capabilities={},models=[]){
 
 export async function probeTranscription(config,options={}){
   try{
-    const text=await transcribeAudio(config,sampleAudio(),options),normalized=text.replace(/[^\p{L}\p{N}]/gu,'');
+    const text=await (config.apiProtocol==='local-sensevoice'?options.localTranscribe(sampleAudio(),config):transcribeAudio(config,sampleAudio(),options)),normalized=text.replace(/[^\p{L}\p{N}]/gu,'');
     const matched=normalized.includes(EXPECTED_SAMPLE);
     return {ok:true,verified:matched,sampleFormat:'wav',message:matched?'识别接口已成功转写内置测试短句。':'接口返回了文字，但没有匹配测试短句，请核对模型和结果路径。',text:text.slice(0,500)};
-  }catch(error){const code=voiceErrorCode(error),inconclusive=config.audioFormat==='silk'&&/^VOICE_API_HTTP_(400|415|422)$/.test(code);return {ok:false,verified:false,code,sampleFormat:'wav',inconclusive,message:errorMessage(code)+(inconclusive?' 内置测试音频为 WAV；仅支持 SILK 的接口需要实际 SILK 输入验证。':'')};}
+  }catch(error){const code=voiceErrorCode(error),local=config.apiProtocol==='local-whisper',inconclusive=!local&&config.audioFormat==='silk'&&/^VOICE_API_HTTP_(400|415|422)$/.test(code);return {ok:false,verified:false,code,sampleFormat:'wav',inconclusive,message:local&&code==='VOICE_API_REQUEST_FAILED'?'无法连接本机 Whisper。请启动 whisper-server、等待模型加载，并核对端口。':errorMessage(code)+(inconclusive?' 内置测试音频为 WAV；仅支持 SILK 的接口需要实际 SILK 输入验证。':'')};}
 }

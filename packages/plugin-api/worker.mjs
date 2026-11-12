@@ -8,7 +8,7 @@ function context(call,data,signal){
   const storage=scope=>Object.freeze(Object.fromEntries(['get','set','delete'].map(method=>[method,(...args)=>service(call,'storage.'+method,[scope,...args])])));
   return Object.freeze({...data,apiVersion:2,signal,config:()=>structuredClone(data.settings),
     storage:storage('chat'),actorStorage:storage('actor'),
-    audio:Object.freeze({read:(id,options)=>service(call,'audio.read',[id,options??{}])}),
+    audio:Object.freeze({read:(id,options)=>service(call,'audio.read',[id,options??{}]),transcribeLocal:(id,options)=>service(call,'audio.transcribeLocal',[id,options??{}])}),
     dshTasks:Object.freeze({control:args=>service(call,'dshTasks.control',[args])}),
     people:Object.freeze({current:()=>service(call,'people.current',[]),recall:options=>service(call,'people.recall',[options??{}]),remember:note=>service(call,'people.remember',[note]),forget:options=>service(call,'people.forget',[options])}),
     documents:Object.freeze({get:id=>service(call,'documents.get',[id]),put:(id,value)=>service(call,'documents.put',[id,value]),list:options=>service(call,'documents.list',[options??{}])}),

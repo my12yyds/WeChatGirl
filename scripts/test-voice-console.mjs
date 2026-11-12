@@ -21,6 +21,7 @@ test('built-in audition succeeds without the conversion queue when chat voice co
  });
  const result=await createVoiceConsole(root).previewEngine({text:'本机试听',style:'cute'});
  assert.deepEqual(Buffer.from(result.b64,'base64'),pcmToWav(pcm));
+ assert.equal(fs.existsSync(path.join(root,'state/voice/outgoing')),false);
 });
 test('audio import stores only normalized bounded WAV with a content-derived song id',async t=>{const root=fixture(t),pcm=Buffer.alloc(48000),api=createVoiceConsole(root,{resample:async()=>pcm});const result=await api.importSong({title:'测试歌曲',b64:pcmToWav(pcm).toString('base64')});assert.match(result.id,/^[a-f0-9]{24}$/);assert.equal(new VoiceJobs(root).songs()[0].title,'测试歌曲');assert.equal(fs.readFileSync(path.join(root,'state/voice/songs',result.id+'.wav')).length,48044);await assert.rejects(api.importSong({title:'无效',b64:Buffer.from('not wav').toString('base64')}));const long=createVoiceConsole(root,{resample:async()=>Buffer.alloc(48000*61)});await assert.rejects(long.importSong({title:'过长',b64:pcmToWav(pcm).toString('base64')}),/60/);});
 test('console test sends only through the authorized durable queue and rejects other chats',t=>{const root=fixture(t),api=createVoiceConsole(root);assert.throws(()=>api.test({key:'wechat:private:999',style:'cute',text:'你好'}),/授权/);const job=api.test({key,style:'cute',text:'你好'});assert.equal(job.state,'queued');assert.equal(new VoiceJobs(root).list().length,1);assert.throws(()=>api.test({key,style:'cute',text:'你好',path:'secret'}));});

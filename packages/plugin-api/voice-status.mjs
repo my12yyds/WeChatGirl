@@ -3,7 +3,7 @@ import path from 'node:path';
 import {directory,atomicJson} from './catalog.mjs';
 
 const relative='state/plugin-service-checks/speech-runtime.json';
-const stages=new Set(['configuration','audio','api','host','complete']);
+const stages=new Set(['configuration','audio','api','local','host','complete']);
 function normalized(value,generation){
   if(value?.version!==1||value.generation!==generation||typeof value.ok!=='boolean'||!Number.isFinite(value.at)||value.at<0||!stages.has(value.stage))return null;
   const code=value.ok?'VOICE_TRANSCRIBED':/^VOICE_[A-Z0-9_]{3,80}$/.test(value.code??'')?value.code:'VOICE_INPUT_FAILED';

@@ -31,6 +31,28 @@ test('empty endpoint fails before reading or uploading voice',async()=>{
   let reads=0;const result=await recognize(context({},()=>{reads++;throw Error('must not read');}),{id});
   assert.equal(result.code,'VOICE_API_NOT_CONFIGURED');assert.equal(reads,0);
 });
+test('SenseVoice transcribes a bound reference through the host without opening the external API',async()=>{
+ const ctx=context({apiProtocol:'local-sensevoice',endpoint:'https://unused.invalid'},()=>assert.fail('Raw audio should stay in the host'));
+ ctx.audio.transcribeLocal=async reference=>{assert.equal(reference,id);return '本机语音转写';};
+ assert.equal((await recognize(ctx,{id})).text,'本机语音转写');
+});
+
+test('local Whisper uses the default inference route, forces WAV, and discards external authentication',async t=>{
+  let requests=0;
+  const endpoint=new URL(await server(t,async(req,res)=>{
+    requests++;assert.equal(req.url,'/inference');assert.equal(req.method,'POST');
+    assert.equal(req.headers.authorization,undefined);
+    let body='';for await(const chunk of req)body+=chunk;
+    assert.match(body,/name="file"; filename="voice.wav"/);
+    assert.match(body,/name="response_format"\r\n\r\njson/);
+    res.end('{"text":"本机转写测试"}');
+  })).origin;
+  const ctx=context({apiProtocol:'local-whisper',endpoint,apiKey:'old-remote-key',audioFormat:'silk'},async(_id,options)=>{
+    assert.equal(options.format,'wav');return audio;
+  });
+  assert.equal((await recognize(ctx,{id})).text,'本机转写测试');
+  assert.equal(requests,1);
+});
 
 test('multipart calls the configured complete endpoint with custom fields and auth, and caches by account/chat/config',async t=>{
   let calls=0,reads=0;

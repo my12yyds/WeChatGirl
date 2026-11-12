@@ -24,7 +24,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateConfig, projectRoot } from './project-config.mjs';
 import { conversationId } from './hook-onebot.mjs';
-import { runConsoleCommand, taskFailureMessage, windowsPowerShellEnvironment, windowsPowerShellExecutable } from './console-process.mjs';
+import { runConsoleCommand, taskFailureMessage, deliveryFailureHint, windowsPowerShellEnvironment, windowsPowerShellExecutable } from './console-process.mjs';
 import { personaError,personaReferences } from '../public/console/persona-files.mjs';
 import {applyChatSettings} from '../public/console/conversation-settings.mjs';
 import { runReaderSetup, readerSetupMessage } from './reader-setup.mjs';
@@ -39,11 +39,24 @@ import {createSpeechPluginConsole} from './speech-plugin-console.mjs';
 import {hostCompatibility} from '../packages/plugin-api/contract.mjs';
 import {ForegroundSender} from './foreground-sender.mjs';
 import {createClientDetector} from './wechat-clients.mjs';
+import {compatibilityStickersEnabled,stickerImageFallbackEnabled} from '../packages/wechat-send-policy.mjs';
+import {createVideoConsole,VIDEO_INPUT_LIMIT} from './video-console.mjs';
 
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const fault = (message, status = 400) => Object.assign(new Error(message), { status });
 const setupCode = value => typeof value==='string'&&/^(?:READER|WECHAT|HOOK|REVIEWED)_[A-Z0-9_]{1,65}$/.test(value)?value:'';
+const sendIssue=code=>deliveryFailureHint(code)?{code,message:deliveryFailureHint(code)}:null;
+function dshConnectionDetail(root,{token,health,error,matches,needsRestart}){
+  if(!token)return '尚未准备 DSH 连接。请在配置向导准备配置，导入并启用本项目插件。';
+  if(error?.upstreamStatus===401||error?.upstreamStatus===403)return taskFailureMessage('DSH_PLUGIN_AUTH_FAILED',1);
+  if(!health)return 'DSH 插件未响应。请确认 DSH 已运行且插件已启用，从托盘完整退出并重开，再刷新模型。';
+  if(health.project!=='WeChatAgent'||!sameProjectPath(health.projectRoot,root))return taskFailureMessage('DSH_PLUGIN_WRONG_PROJECT',1);
+  if(!health.ok)return 'DSH 插件已响应，但微信账号尚未就绪或已切换。先验证微信账号，再完整重开 DSH。';
+  if(needsRestart&&!matches)return 'DSH 正使用旧的连接设置。请准备配置，从托盘完整退出并重开 DSH，然后刷新模型。';
+  if(health.contextMode!=='native-session-v1'||health.behaviorPolicy!=='local-config-only-v1'||health.imageInput!=='native-attachment-v1')return '当前 DSH 桥接接口版本较旧。请重新导入本项目插件，再从托盘完整重开 DSH。';
+  return 'DSH 插件已连接';
+}
 const atomic = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
@@ -152,6 +165,12 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
     statusTime = 0;
   };
   const voiceComponents=createVoiceComponents({root,pickFile:()=>filePicker?filePicker('zip'):nativeHelper('zip'),python:()=>snapshot().config.runtime?.python??'python'});
+  const videoConsole=createVideoConsole({root,describe:async({b64,mime,video,selection,parser,signal})=>{
+    const health=await plugin('/health',undefined,{signal});
+    if(!health.pluginHostFeatures?.includes('video-workbench-v1'))throw fault('请从托盘完整退出并重开 DSH，让它加载视频识别接口。',409);
+    const config=snapshot().config.dsh;
+    return plugin('/vision-test',{b64,mime,video,mode:parser?'parser':'route',chatSelection:{provider:selection?.provider??config.provider,model:selection?.model??config.model},selection:parser??config.visionFallback?.selection??null,enabled:config.visionFallback?.enabled!==false},{signal});
+  }});
   const assertIdle = () => { if(shuttingDown)throw fault('正在退出并停止后台服务，请等待操作完成。',409);if(voiceComponents.busy)throw fault('语音组件正在选择或导入，请等待完成后再保存、重启或退出。',409);if (activeJob || protectingCredential || processRecoveryBusy) throw fault('有操作正在进行，请等它完成后再保存或执行其他操作。', 409); };
   function shutdown() {
     if(shutdownPromise)return shutdownPromise;
@@ -166,7 +185,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
   }
   async function remote(url, token, timeout = 2200) {
     const response = await fetchImpl(url, { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(timeout) });
-    if (!response.ok) throw fault('连接服务暂不可用。请检查服务是否启动。', 503);
+    if (!response.ok) throw Object.assign(fault('连接服务暂不可用。请检查服务是否启动。', 503),{upstreamStatus:response.status});
     const data = await response.json();
     if (data.success === false) throw fault('读取服务返回错误，请查看运行日志。', 503);
     return data;
@@ -194,9 +213,15 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
     const tokenFile = path.join(root, 'state', 'social-dsh-token.txt');
     if (!fs.existsSync(tokenFile)) throw fault('模型连接尚未准备，请先打开 DSH 并启用本项目插件。', 503);
     const token = fs.readFileSync(tokenFile, 'utf8').trim();
-    const health = await remote(`http://127.0.0.1:${config.ports.dshPlugin}/health`, token);
-    if (health.project !== 'WeChatAgent' || !sameProjectPath(health.projectRoot,root)) throw fault('DSH 插件连接到其他项目，请启用当前项目插件。', 503);
-    if(body===undefined)return remote(`http://127.0.0.1:${config.ports.dshPlugin}${route}`, token, route==='/models'?15000:5000);
+    let health;
+    try{health=await remote(`http://127.0.0.1:${config.ports.dshPlugin}/health`, token);}
+    catch(error){throw fault(dshConnectionDetail(root,{token,error}),503);}
+    if (health.project !== 'WeChatAgent' || !sameProjectPath(health.projectRoot,root)) throw fault(dshConnectionDetail(root,{token,health}),503);
+    if(body===undefined){
+      if(route!=='/models')return remote(`http://127.0.0.1:${config.ports.dshPlugin}${route}`,token);
+      try{return await remote(`http://127.0.0.1:${config.ports.dshPlugin}/models`,token,15000);}
+      catch{throw fault('DSH 桥接已连接，但模型列表读取失败。请确认 DSH 已登录模型账号，能在 DSH 新会话正常发消息，再刷新列表。',503);}
+    }
     const response=await fetchImpl(`http://127.0.0.1:${config.ports.dshPlugin}${route}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([AbortSignal.timeout(60000),...(signal?[signal]:[])])});
     const result=await response.json();
     if(!response.ok&&route==='/vision-test'){const messages={VISION_FALLBACK_DISABLED:'当前聊天模型不能直接识图，且独立图片解析已关闭；可开启后测试，或只测试备用模型。',VISION_MODEL_UNAVAILABLE:'没有找到可识图模型，请检查提供方与模型能力。',VISION_SELECTED_MODEL_UNSUPPORTED:'所选模型未被 DSH 确认为可输入图片，请换一个识图模型。',VISION_PARSE_TIMEOUT:'识图测试超时，请稍后重试或更换模型。',VISION_TEST_INVALID:'测试图片无效，请选择 PNG、JPEG 或 WebP 图片。',VISION_TEST_CHAT_MODEL_REQUIRED:'请先选择默认聊天模型。',IMAGE_ACCOUNT_CHANGED:'微信账号已切换，请重开 DSH。'};throw fault(messages[result.error]??'识图测试未完成，请检查模型连接和 DSH 日志。',400);}
@@ -238,11 +263,11 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       const { rows } = buffered();
       const services = [
         { id: 'reader', label: '微信读取', ready: readerReady, detail: readerReady ? '数据库可读，消息同步正常' : readerState?.lastError ? '读取异常，请重新连接并验证' : readerFailureDetail(), port: config.ports.weflow },
-        { id: 'bridge', label: '消息桥接', ready: bridgeReady && hookReady && adapter?.reader_connected === true, detail: bridgeReady && hookReady && adapter?.reader_connected ? '收发连接正常，账号已核验' : !hookReady ? '等待匹配微信登录与发送连接' : '等待消息桥接连接', port: config.ports.adapter },
-        { id: 'dsh', label: '模型连接', ready: dshReady, detail: dshReady ? 'DSH 插件已连接' : '打开 DSH 并启用本项目插件', port: config.ports.dshPlugin },
+        { id: 'bridge', label: '消息桥接', ready: bridgeReady && hookReady && adapter?.reader_connected === true, detail: bridgeReady && hookReady && adapter?.reader_connected ? '收发连接正常，账号已核验' : !hookReady ? '请打开匹配微信并登录绑定的账号；若仍失败，点“连接诊断 → 检查发送”。' : '微信已核验。请启动或重启服务恢复消息桥接。', port: config.ports.adapter },
+        { id: 'dsh', label: '模型连接', ready: dshReady, detail: dshConnectionDetail(root,{token,health,error:results[3].reason,matches:matchesDsh,needsRestart:optionalJson(preferenceFile).dshRestartRequired}), port: config.ports.dshPlugin },
       ];
       const running = !!readerState || !!adapter || !!value(4);
-      return { ready, running, services, lastError: safeText(adapter?.last_error ?? ''),
+      return { ready, running, services, lastError: safeText(adapter?.last_error ?? ''), sendIssue:sendIssue(adapter?.last_send_error),
         stats: { received: rows.filter(m => !m.outgoing).length, sent: rows.filter(m => m.outgoing).length, pending: rows.filter(m => !m.outgoing && !m.processed).length, chats: buffered().chatCount },
         recent: rows.sort((a, b) => b.timestamp - a.timestamp).slice(0, 6).map(m => ({ key: m.key, name: m.conversation_name, text: m.text?.slice(0, 100), outgoing: m.outgoing, timestamp: m.timestamp })),
         ...optionalJson(preferenceFile), activeJob: activeJob ? jobs.get(activeJob) : null, latestJob: latestJob ? jobs.get(latestJob) : null, updatedAt: Date.now() };
@@ -370,10 +395,14 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
     });
     return job;
   }
-  async function readBody(req,limit=128*1024) {
+  async function readBytes(req,limit) {
     let size = 0; const chunks = [];
     for await (const chunk of req) { size += chunk.length; if (size > limit) throw fault('提交内容过大。', 413); chunks.push(chunk); }
-    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fault('表单内容无效。'); }
+    return Buffer.concat(chunks,size);
+  }
+  async function readBody(req,limit=128*1024) {
+    const bytes=await readBytes(req,limit);
+    try { return JSON.parse(bytes.toString('utf8')); } catch { throw fault('表单内容无效。'); }
   }
   async function nativeHelper(kind, input) {
     if (process.platform !== 'win32') throw fault('文件选择与凭据保护需要 Windows。');
@@ -460,7 +489,15 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         const results=await Promise.allSettled([getStatus(),remote('http://127.0.0.1:'+project.ports.adapter+'/status',null),stickerManager('')]);
         const status=results[0].status==='fulfilled'?results[0].value:{services:[]},adapter=results[1].status==='fulfilled'?results[1].value:{},pool=results[2].status==='fulfilled'?results[2].value:null;
         const readerReady=status.services.some(service=>service.id==='reader'&&service.ready),bridgeReady=status.services.some(service=>service.id==='bridge'&&service.ready);
-        return reply(200,{checks:[{label:'微信读取服务',ok:readerReady,detail:readerReady?'已连接，可读取当前账号表情。':'读取服务未就绪，请启动服务或检查微信账号连接。'},{label:'消息桥接服务',ok:bridgeReady,detail:bridgeReady?'收发连接已就绪。':'消息桥接未就绪，请启动服务并检查微信连接。'},{label:'表情发送方式',ok:mode==='foreground'?bridgeReady:adapter.native_sticker_send===true,detail:mode==='foreground'?'当前为前台模式：使用微信收藏中的随机表情，需要微信窗口可操作；共享池中的指定表情不会通过Hook发送。':adapter.native_sticker_send===true?'Hook组件支持原生表情发送。':'原生表情发送组件未就绪，请检查匹配微信是否已打开。'},{label:'当前账号共享池',ok:!!pool&&(mode==='foreground'||pool.count>0),detail:pool?'已加载 '+pool.count+' 张表情。'+(mode==='foreground'?'前台模式的收藏表情由微信管理。':pool.count?'聊天收集的表情仍受来源与共享范围限制。':'请添加表情或开启允许范围内的自动收集。'):'表情池无法连接，请先恢复读取服务。'}],lastError:/^[A-Z][A-Z0-9_]{2,79}$/.test(adapter.last_error??'')?adapter.last_error:''});
+        const native=mode!=='foreground'&&adapter.native_sticker_send===true,foreground=mode==='foreground'||!native&&compatibilityStickersEnabled(project);
+        const imageFallback=!native&&adapter.native_image_send===true&&stickerImageFallbackEnabled(project);
+        const sendDetail=native?'Hook 支持原生指定表情。':imageFallback?'可发送指定表情的静态首帧。'+(foreground?'也可选微信随机收藏。':''):foreground?'从微信收藏随机选一张。请在微信添加至少一张收藏表情，并保持桌面解锁、微信窗口可操作。':project.hook.expectedVersion==='4.1.15.13'?deliveryFailureHint('NATIVE_STICKER_UNAVAILABLE'):'请打开匹配微信，启动服务后检查发送组件。';
+        return reply(200,{checks:[
+          {label:'微信读取服务',ok:readerReady,detail:readerReady?'已连接，可读取当前账号表情。':'读取服务未就绪，请先在配置向导连接并验证微信。'},
+          {label:'消息桥接服务',ok:bridgeReady,detail:bridgeReady?'收发连接已就绪。':'请启动服务并检查微信发送连接。'},
+          {label:'表情发送方式',ok:bridgeReady&&(native||foreground||imageFallback),detail:sendDetail},
+          {label:foreground?'微信收藏':'当前账号共享池',ok:foreground?null:!!pool&&pool.count>0,detail:foreground?'请在微信表情面板手动检查收藏。账号共享池中的素材与微信收藏分别管理。':pool?'已加载 '+pool.count+' 张表情。'+(pool.count?'仍需在目标聊天允许发送。':'可手动添加表情，或启用收集。'):'表情池无法连接，请先恢复读取服务。'},
+        ],issue:sendIssue(adapter.last_sticker_error)});
       }
       if(req.method==='GET'&&route==='/api/sticker-manager')return reply(200,await stickerManager(''));
       if(req.method==='GET'&&route==='/api/sticker-manager/image'){
@@ -487,7 +524,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       if (req.method === 'GET' && route === '/api/status') return reply(200, await getStatus());
       if(req.method==='GET'&&route==='/api/people-memory'){const account=activeReaderAccount(root);if(!account.id)throw fault('请先连接微信。',409);const memory=new PeopleMemory({root,accountScope:hash(account.id),accountId:account.id});return reply(200,{scope:account.id,...memory.catalog()});}
       if(req.method==='GET'&&route==='/api/dsh-models'){
-        try{return reply(200,await plugin('/models'));}catch{return reply(200,{available:false,models:[],message:'模型列表暂不可用，请确认 DSH 已运行并已加载本项目新版插件。'});}
+        try{return reply(200,await plugin('/models'));}catch(error){return reply(200,{available:false,models:[],message:error.status?error.message:'暂时无法读取模型列表，请在连接诊断检查 DSH。'});}
       }
       if(req.method==='GET' && route==='/api/process-recovery'){
         assertIdle();const config=snapshot();
@@ -543,12 +580,23 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         return reply(200, { dbPath: /^(userdpapi:|safe:)/.test(settings.dbPath ?? '') ? '' : settings.dbPath ?? '', myWxid: /^(userdpapi:|safe:)/.test(settings.myWxid ?? '') ? '' : settings.myWxid ?? '', hasKey: !!settings.decryptKey, hasPath: !!settings.dbPath, hasAccount: !!settings.myWxid, verified: readerVerified(), revision: hash(JSON.stringify(settings)) });
       }
       if (req.method !== 'POST') throw fault('接口不存在。', 404);
+      if(route==='/api/video-workbench'){
+        assertIdle();
+        if(req.headers['content-type']!=='application/octet-stream')throw fault('请选择本地视频文件。',415);
+        if(Number(req.headers['content-length'])>VIDEO_INPUT_LIMIT)throw fault('视频文件超过 32 MB，请先截取片段。',413);
+        const controller=new AbortController();
+        res.once('close',()=>{if(!res.writableEnded)controller.abort();});
+        try{
+          const bytes=await readBytes(req,VIDEO_INPUT_LIMIT);
+          return reply(200,await videoConsole(bytes,{action:url.searchParams.get('action'),format:url.searchParams.get('format'),key:url.searchParams.get('key'),signal:controller.signal}));
+        }catch(error){if(controller.signal.aborted)return;throw error;}
+      }
       if (!req.headers['content-type']?.startsWith('application/json')) throw fault('请使用控制台表单。', 415);
       const body = await readBody(req,['/api/sticker-manager/import','/api/plugins/bundle/inspect','/api/plugins/inspect','/api/voice-studio/import-song','/api/voice-studio/voices','/api/vision-test'].includes(route)?11300000:128*1024);
       if(route==='/api/updates/check')return reply(200,await updates.check({force:true}));
       if (route === '/api/jobs') return reply(202, startJob(body));
       assertIdle();
-      if(route==='/api/vision-test'){if(!body||typeof body.b64!=='string'||body.b64.length>1050000)throw fault('测试图片过大，请使用768 KiB以内的图片。');const settings=snapshot().config.dsh;const health=await plugin('/health');if(health.visionTest!=='isolated-image-test-v1')throw fault('请从托盘完整退出并重新打开 DSH，以加载图片测试接口。',409);const controller=new AbortController();req.once('aborted',()=>controller.abort());res.once('close',()=>{if(!res.writableEnded)controller.abort();});return reply(200,await plugin('/vision-test',{...body,chatSelection:body.chatSelection??{provider:settings.provider,model:settings.model}},{signal:controller.signal}));}
+      if(route==='/api/vision-test'){if(!body||body.video!==undefined||typeof body.b64!=='string'||body.b64.length>1050000)throw fault('测试图片过大，请使用768 KiB以内的图片。');const settings=snapshot().config.dsh;const health=await plugin('/health');if(health.visionTest!=='isolated-image-test-v1')throw fault('请从托盘完整退出并重新打开 DSH，以加载图片测试接口。',409);const controller=new AbortController();req.once('aborted',()=>controller.abort());res.once('close',()=>{if(!res.writableEnded)controller.abort();});return reply(200,await plugin('/vision-test',{...body,chatSelection:body.chatSelection??{provider:settings.provider,model:settings.model}},{signal:controller.signal}));}
       const musicAction=/^\/api\/music\/([a-z-]+)$/.exec(route);if(musicAction)return reply(200,await musicConsole.action(musicAction[1],body));
       if(route==='/api/voice-components/select')return reply(200,await voiceComponents.select());
       if(route==='/api/voice-components/import')return reply(202,voiceComponents.start(body));
@@ -603,6 +651,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
             let live=null;try{live=await plugin('/health');}catch{}
             const item=scanPlugins(root).find(item=>item.id==='speech-recognition'&&!item.invalid);
             if(item){const compatibility=hostCompatibility(item,live);if(!compatibility.compatible)throw fault(compatibility.reason,409);}
+            if(body.settings?.apiProtocol==='local-sensevoice'&&!live?.pluginHostFeatures?.includes('local-sensevoice-v1'))throw fault('请从托盘完整退出并重开 DSH，以加载本机 SenseVoice。',409);
           }
         }
         const result=pluginRoute[2]?archivePlugin(root,pluginRoute[1],body.revision):updatePlugin(root,pluginRoute[1],body);

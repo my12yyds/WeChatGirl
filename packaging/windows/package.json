@@ -1,6 +1,6 @@
 {
   "name": "wechatgirl-windows-packaging",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "private": true,
   "description": "Isolated Windows installer build dependencies",
   "dependencies": {

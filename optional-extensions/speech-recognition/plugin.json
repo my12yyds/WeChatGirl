@@ -1,11 +1,11 @@
 {
   "id": "speech-recognition",
   "name": "微信语音识别",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "apiVersion": 2,
   "host": "wechatagent",
   "author": "sourcepro5 / WeChatGirl",
-  "description": "识别好友和群聊收到的微信语音，再由当前聊天模型回复。可读取接口模型并检测配置；需自行填写语音API，未配置、未授权的聊天不上传音频。",
+  "description": "把已授权聊天收到的微信语音转成文字，再交给当前聊天模型回复。可选本机 Whisper 或外接识别 API，支持用内置短句检测。",
   "permissions": [
     "audio_read"
   ],
@@ -48,6 +48,8 @@
       "description": "按协议处理服务地址、鉴权和请求；自定义请求保留高级模板。",
       "enum": [
         "auto",
+        "local-whisper",
+        "local-sensevoice",
         "openai-transcriptions",
         "openai-chat",
         "chat-audio-data-url",

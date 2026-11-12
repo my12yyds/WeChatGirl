@@ -93,7 +93,7 @@ export class WechatOneBotAdapter extends BaseAdapter {
       return {accepted:false,attempted:true,delivered:'unconfirmed',deliveryId};
     }
     if(abandon&&result.data?.released===true)return result.data;
-    if(result.data?.receipt!=='wechat-server-id'||result.data?.media_type!=='wechat-sticker')throw new Error('Sticker send has no server receipt');
+    if(result.data?.receipt!=='wechat-server-id'||(result.data?.media_type!=='wechat-sticker'&&!(result.data?.media_type==='wechat-image'&&result.data?.selection==='sticker-first-frame')))throw new Error('Sticker send has no server receipt');
     this.stats.sends++;return result;
   }
   async stickerLabels({kind,target,ids}){return (await this.server.action('get_sticker_labels',{kind,target:String(target),ids})).data?.labels??[];}

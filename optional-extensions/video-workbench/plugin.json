@@ -1,0 +1,18 @@
+{
+  "id": "video-workbench",
+  "name": "视频压缩与识别",
+  "version": "1.1.0",
+  "apiVersion": 2,
+  "host": "wechatagent",
+  "author": "WeChatGirl",
+  "description": "在控制台选取本地视频，压缩为 MP4，或抽帧交给所选聊天的 DSH 识图模型。",
+  "permissions": [],
+  "requiresHostFeatures": ["video-workbench-v1"],
+  "settings": { "resolution": 720, "quality": 26, "sampleFrames": 6, "visionModel": {} },
+  "configSchema": {
+    "resolution": {"type":"integer","title":"压缩分辨率上限","enum":[480,720,1080],"description":"按原画面比例缩小，保留首条音轨。"},
+    "quality": {"type":"integer","title":"压缩强度（CRF）","minimum":20,"maximum":34,"description":"数字越大压缩越明显，画质也会降低。默认 26。"},
+    "sampleFrames": {"type":"integer","title":"识别抽帧数量","enum":[4,6,8],"description":"抽帧越多越容易覆盖画面变化，短暂出现的内容仍可能遗漏。"},
+    "visionModel": {"type":"object","title":"视频识别模型","properties":{"provider":{"type":"string","maxLength":200},"model":{"type":"string","maxLength":200}},"additionalProperties":false}
+  }
+}

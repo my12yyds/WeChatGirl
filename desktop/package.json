@@ -1,7 +1,7 @@
 {
   "name": "wechatgirl",
   "productName": "WeChatGirl",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "WeChatGirl 微信助手",
   "main": "main.cjs",
   "author": "WeChatGirl contributors",

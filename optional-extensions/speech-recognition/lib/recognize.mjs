@@ -23,15 +23,25 @@ function checkTree(value, depth = 0) {
   return value;
 }
 
-export function endpointUrl(value) {
+export function endpointUrl(value, {localOnly=false}={}) {
   let url;
   try { url = new URL(value); } catch { throw fault('VOICE_API_NOT_CONFIGURED'); }
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const loopback = host === 'localhost' || host === '::1' || net.isIP(host) === 4 && host.startsWith('127.');
+  if(localOnly&&!loopback)throw fault('VOICE_LOCAL_ENDPOINT_REQUIRED');
   if (url.username || url.password || url.hash || url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
     throw fault('VOICE_API_ENDPOINT_INVALID');
   }
   return url;
+}
+
+export function recognitionConfig(config) {
+  if(config.apiProtocol!=='local-whisper')return config;
+  const url=endpointUrl(config.endpoint||'http://127.0.0.1:8080/inference',{localOnly:true});
+  if(url.pathname==='/')url.pathname='/inference';
+  return {...config,endpoint:url.href,apiProtocol:'custom',apiKey:'',headersJson:'{}',
+    requestMode:'multipart',audioFormat:'wav',fileField:'file',model:'',modelField:'',
+    languageField:'language',extraFieldsJson:'{"response_format":"json"}',responseMode:'json',responsePath:'text'};
 }
 
 export function resolveApi(config) {
@@ -164,6 +174,7 @@ export async function limitedBody(response, maxBytes = 65536) {
 }
 
 export async function transcribeAudio(config, audio, {signal, fetchImpl = fetch} = {}) {
+  config=recognitionConfig(config);
   validateConfig(config);
   const {url,protocol}=resolveApi(config);
   const request = requestFor(config, audio);
@@ -192,12 +203,21 @@ export async function recognize(ctx, {id}) {
   let stage='configuration';
   try {
     if (!/^[a-f0-9]{64}$/.test(id)) throw fault('VOICE_REFERENCE_INVALID');
-    const config = ctx.config();validateConfig(config);
+    const raw=ctx.config(),senseVoice=raw.apiProtocol==='local-sensevoice';
+    const config = senseVoice?raw:recognitionConfig(raw);
+    if(!senseVoice)validateConfig(config);
     const identity = crypto.createHash('sha256').update(JSON.stringify([ctx.account.id, ctx.chat.key, id, config])).digest('hex');
     if (config.cacheResults && cache.has(identity)) return {...cache.get(identity), cached: true};
-    stage='audio';const audio = await ctx.audio.read(id, {format: config.audioFormat});
-    if (audio.durationSeconds > config.maxDurationSeconds) throw fault('VOICE_DURATION_LIMIT');
-    stage='api';const text = await transcribeAudio(config,audio,{signal:ctx.signal});
+    let text;
+    if(senseVoice){
+      stage='local';if(typeof ctx.audio.transcribeLocal!=='function')throw fault('VOICE_SENSEVOICE_NOT_READY');
+      text=await ctx.audio.transcribeLocal(id);
+      if(text.length>config.maxTranscriptChars)throw fault('VOICE_TRANSCRIPT_TOO_LONG');
+    }else{
+      stage='audio';const audio = await ctx.audio.read(id, {format: config.audioFormat});
+      if (audio.durationSeconds > config.maxDurationSeconds) throw fault('VOICE_DURATION_LIMIT');
+      stage='api';text = await transcribeAudio(config,audio,{signal:ctx.signal});
+    }
     const result = {ok: true, id, text};
     if (config.cacheResults) {
       cache.set(identity, result);

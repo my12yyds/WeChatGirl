@@ -31,7 +31,7 @@ from wechat_voice_input import VoiceCatalog, voice_info, load_voice_blob, audio_
 from wechat_media import clean_account_wxid, image_cache_current
 from wechat_forwarded import FORWARD_TYPE, parse_forwarded_record
 from wechat_quote import QUOTE_TYPE, parse_quote_reply
-from wechat_sticker_send import sticker_send_fields, sticker_receipt_md5, APPMSG_STICKER_TYPE, native_gif_bytes, stage_sticker_resource
+from wechat_sticker_send import sticker_send_fields, sticker_receipt_md5, APPMSG_STICKER_TYPE, native_gif_bytes, stage_sticker_resource, stage_sticker_image
 from wechat_sticker import emoji_attributes, resolve_sticker_bytes, sticker_image_xml, NoRedirect
 from wechat_sticker_labels import StickerLabels, clean_label
 from wechat_sticker_collection import StickerCollection
@@ -1022,7 +1022,8 @@ def serve(reader, port, token):
                 elif url.path == '/api/v1/stickers':
                     self.respond({'stickers':reader.sticker_candidates(query.get('conversationKey',[''])[0],query.get('query',[''])[0][:500])})
                 elif re.fullmatch(r'/api/v1/stickers/[a-f0-9]{64}',url.path):
-                    self.respond(reader.resolve_sticker(url.path.rsplit('/',1)[1],query.get('conversationKey',[''])[0]))
+                    resource=reader.resolve_sticker(url.path.rsplit('/',1)[1],query.get('conversationKey',[''])[0])
+                    self.respond(stage_sticker_image(reader.root,resource) if query.get('format',[''])[0]=='png' else resource)
                 else:
                     self.respond({'success': False, 'error': 'Not found'}, 404)
             except ManagerError as error:

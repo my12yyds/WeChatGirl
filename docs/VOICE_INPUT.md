@@ -1,6 +1,6 @@
-# 微信语音 API 转写
+# 微信语音转写
 
-可选插件源码位于 `optional-extensions/speech-recognition/`，可导入包为 `optional-extensions/packages/speech-recognition-1.3.0.zip`。基于 sourcepro5/WeChatAgent 固定提交 `38c1060ce500a294d69a4a2f9e07ca1b63a08b06`，来源和许可随包保留。本功能不预设 API 地址、服务商、模型或密钥。
+可选插件源码位于 `optional-extensions/speech-recognition/`，可导入包为 `optional-extensions/packages/speech-recognition-1.4.0.zip`。基于 sourcepro5/WeChatAgent 固定提交 `38c1060ce500a294d69a4a2f9e07ca1b63a08b06`，来源和许可随包保留。外接模式由用户配置服务和密钥。本机 Whisper 模式默认访问回环端口 8080，配置步骤见[插件说明](plugins/speech-recognition.md)。
 
 1.3.0 补齐本项目中原先缺失的读取器 → OneBot → 语音排队 → DSH 动作 → 插件受控读音频 → 转写 → 原聊天回复链路，配置页接入协议、模型和检测区域。它要求宿主 `voice-input-route-v1`，不能只看旧宿主的 `voice-input-v1` 声明。加载配套源码后需完整重开 DSH 与后台；已发布 0.5.1 安装附件不自动包含本次未发布修改。
 
@@ -17,7 +17,7 @@
 
 权限撤销、账号切换或进程停止后不采用未完成结果。读取和上传有截止时间，全局最多两条识别请求，无自动上传重试。识别过程中重启、断网或服务商响应丢失时，无法证明远端是否已处理或计费；不会伪报成功。
 
-新版宿主随包提供固定版本 `silk-wasm` 解码器（含来源、校验和和许可）。Python 解码桥使用发行版 Node 执行该组件，兼容内置 Python 3.13，不要求 pip 或 pilk。能力检测会运行一段合成 PCM→SILK→PCM；格式、包边界、输入大小、输出时长和进程时间均受限。旧环境仍可使用 `scripts/voice-requirements.txt` 的 pilk 回退。没有本地 ASR 模型或后台下载。只更新插件 ZIP 不会升级旧宿主的解码与检测代码。
+新版宿主随包提供固定版本 `silk-wasm` 解码器（含来源、校验和和许可）。Python 解码桥使用发行版 Node 执行该组件，兼容内置 Python 3.13，不要求 pip 或 pilk。能力检测会运行一段合成 PCM→SILK→PCM；格式、包边界、输入大小、输出时长和进程时间均受限。旧环境仍可使用 `scripts/voice-requirements.txt` 的 pilk 回退。插件可连接用户自行启动的本机 Whisper 服务。模型与服务器独立安装。只更新插件 ZIP 不会升级旧宿主的解码与检测代码。
 
 模型列表对实时协议给出提示；实时、streaming 或 ASR message 模型不自动选为 HTTP 候选。最终兼容性仍以接口检测结果为准，不预设服务商地址。
 

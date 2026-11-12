@@ -17,6 +17,21 @@ import {hostContract} from '../packages/plugin-api/contract.mjs';
 const source=path.resolve('optional-extensions/speech-recognition'),defaults=JSON.parse(fs.readFileSync(path.join(source,'plugin.json'))).settings;
 const config=extra=>({...defaults,endpoint:'https://asr.example.test/v1/audio/transcriptions',model:'fixture-asr',apiKey:'fixture-secret-key',...extra});
 const capability=async()=>({checked:true,decoder:true});
+test('local Whisper sends only a WAV to the loopback service and omits external credentials',async t=>{
+ const f=fixture(t);let calls=0;
+ const api=createSpeechPluginConsole({root:f.root,readCapabilities:capability,fetchImpl:async(url,options)=>{
+   calls++;assert.equal(url.href,'http://127.0.0.1:8080/inference');assert.equal(options.method,'POST');
+   assert.equal(options.headers.has('authorization'),false);assert.equal(options.redirect,'error');
+   assert.equal(options.body.get('response_format'),'json');assert.equal(options.body.get('file').type,'audio/wav');
+   assert.equal(options.body.get('language'),'zh');return Response.json({text:EXPECTED_SAMPLE});
+ }});
+ t.after(()=>api.close());
+ const local={apiProtocol:'local-whisper',endpoint:'',language:'zh',audioFormat:'silk'};
+ const result=await api.run('check',{...f.body(local),testAudio:true});
+ assert.equal(result.summary.ready,true);assert.equal(result.audioFormat,'wav');assert.equal(calls,1);
+ const invalid=await api.run('check',{...f.body({...local,endpoint:'https://asr.example.test/inference'}),testAudio:true});
+ assert.equal(invalid.configuration.checks[0].code,'VOICE_LOCAL_ENDPOINT_REQUIRED');assert.equal(calls,1);
+});
 function fixture(t){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'speech-diagnostics-'));t.after(()=>{assert(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:50});});
   atomicJson(path.join(root,'config/wechatagent.json'),{runtime:{python:'fixture-python'},wechat:{whitelist:{private:['123'],groups:[]}}});

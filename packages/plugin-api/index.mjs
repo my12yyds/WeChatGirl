@@ -1,4 +1,5 @@
 import {MusicPreferences} from '../voice-studio/music-preferences.mjs';
+import {transcribeSenseVoice} from './sensevoice.mjs';
 import {songPlayback} from '../voice-studio/segments.mjs';
 import {ArchiveMemory} from './archive-memory.mjs';
 import {filterMemoryOverrides} from '../dsh-social-bridge-plugin/continuity-memory.mjs';
@@ -114,6 +115,18 @@ export class PluginRuntime{
         if(!this.accountBound||!turn.voiceIds?.includes(id)||!options||Object.keys(options).some(key=>key!=='format')||!['wav','silk'].includes(options.format??'wav'))throw fail('VOICE_REFERENCE_NOT_ALLOWED');
         const result=await this.readAudio(id,turn.conversationKey,record.id,{...options,signal});
         check('audio_read');return result;
+      }
+      if(method==='audio.transcribeLocal'){
+        check('audio_read');if(readOnly)throw fail('PLUGIN_HOOK_READ_ONLY');
+        const [id,options]=args;
+        const settings={...record.settings,...this.policy().config.plugins[record.id]?.settings};
+        if(record.id!=='speech-recognition'||settings.apiProtocol!=='local-sensevoice'||!this.accountBound||!turn.voiceIds?.includes(id)||
+          !options||Object.keys(options).length)throw fail('VOICE_REFERENCE_NOT_ALLOWED');
+        const audio=await this.readAudio(id,turn.conversationKey,record.id,{format:'wav',signal});
+        check('audio_read');
+        if(audio.durationSeconds>settings.maxDurationSeconds)throw fail('VOICE_DURATION_LIMIT');
+        const text=await transcribeSenseVoice(this.root,audio,{language:settings.language,timeoutMs:settings.timeoutMs,signal});
+        check('audio_read');return text;
       }
       if(method.startsWith('documents.')){
         check('documents');const documents=new PluginDocuments(this.root,this.accountScope,this.accountId,record);

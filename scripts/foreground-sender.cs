@@ -33,16 +33,6 @@ public static class WhaleForeground {
     if(candidates.Length!=1)throw new Exception("FOREGROUND_WINDOW_AMBIGUOUS");
     return AutomationElement.FromHandle(candidates[0].MainWindowHandle);
   }
-  static bool Click(AutomationElement e) {
-    object pattern;
-    if(e.TryGetCurrentPattern(InvokePattern.Pattern,out pattern)){((InvokePattern)pattern).Invoke();return true;}
-    if(e.TryGetCurrentPattern(SelectionItemPattern.Pattern,out pattern)){((SelectionItemPattern)pattern).Select();return true;}
-    System.Windows.Point point;
-    if(e.TryGetClickablePoint(out point)){
-      SetCursorPos((int)point.X,(int)point.Y);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);return true;
-    }
-    return false;
-  }
   static void Fill(AutomationElement e,string text) {
     object value;
     if(!e.TryGetCurrentPattern(ValuePattern.Pattern,out value))throw new Exception("FOREGROUND_VALUE_UNAVAILABLE");
@@ -274,6 +264,21 @@ public static class WhaleForeground {
     var cls=e.Current.ClassName.ToLowerInvariant();var r=e.Current.BoundingRectangle;
     return Visible(e)&&r.Width<=320&&r.Height<=320&&(cls=="mmui::favemoticonitemview"||e.Current.AutomationId.ToLowerInvariant().Contains("favemoticon")||generic&&(cls=="mmui::emoticonitemview"||cls=="mmui::commonemoticonview"));
   }).ToArray();}
+  static bool ClickStickerControl(AutomationElement element,AutomationElement panel,bool submitting){
+    System.Windows.Point point;
+    if(element==null||!element.TryGetClickablePoint(out point))return false;
+    var foreground=GetForegroundWindow();
+    if(foreground==IntPtr.Zero||AutomationElement.FromHandle(foreground).Current.ProcessId!=panel.Current.ProcessId)return false;
+    var hit=AutomationElement.FromPoint(point);
+    while(hit!=null&&hit.Current.ProcessId==panel.Current.ProcessId&&!Automation.Compare(hit,element)){
+      if(Automation.Compare(hit,panel))return false;
+      hit=TreeWalker.RawViewWalker.GetParent(hit);
+    }
+    if(hit==null||!Automation.Compare(hit,element)||!SetCursorPos((int)point.X,(int)point.Y)||GetForegroundWindow()!=foreground)return false;
+    if(submitting)Attempted=true;
+    mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);
+    return true;
+  }
   public static bool SendFavorite(string exe,string name){
     var root=OpenChat(exe,name);EmptyInput(root,name);
     var launcher=Controls(root).FirstOrDefault(e=>Visible(e)&&(e.Current.AutomationId=="chat_text_emoticon_view"||e.Current.Name=="发送表情"||e.Current.Name=="发送表情(Alt+E)"||e.Current.Name=="表情"||e.Current.ClassName=="mmui::EmoticonView"));
@@ -288,15 +293,16 @@ public static class WhaleForeground {
     if(panel==null)throw new Exception("FOREGROUND_STICKER_PANEL_UNAVAILABLE");
     var items=Favorites(panel,false);
     if(items.Length==0){
-      var tab=Controls(panel).FirstOrDefault(e=>Visible(e)&&e.Current.ClassName.ToLowerInvariant()=="mmui::emoticontoolbaritem"&&(e.Current.Name.Contains("收藏")||e.Current.Name.Contains("自定义表情")||(e.Current.AutomationId+e.Current.Name).ToLowerInvariant().Contains("fav")));
-      if(tab==null||!Click(tab))throw new Exception("FOREGROUND_FAVORITES_TAB_UNAVAILABLE");
-      Thread.Sleep(300);panel=Panel(root);if(panel==null)throw new Exception("FOREGROUND_STICKER_PANEL_UNAVAILABLE");items=Favorites(panel,true);
+      var tab=Controls(panel).FirstOrDefault(e=>Visible(e)&&e.Current.ClassName.ToLowerInvariant()=="mmui::emoticontoolbaritem"&&(e.Current.Name.Contains("收藏")||e.Current.Name.Contains("添加的表情")||e.Current.Name.Contains("自定义表情")||(e.Current.AutomationId+e.Current.Name).ToLowerInvariant().Contains("fav")));
+      if(!ClickStickerControl(tab,panel,false))throw new Exception("FOREGROUND_FAVORITES_TAB_UNAVAILABLE");
+      for(int attempt=0;attempt<12&&items.Length==0;attempt++){
+        Thread.Sleep(100);panel=Panel(root);if(panel!=null)items=Favorites(panel,true);
+      }
     }
     if(items.Length==0)throw new Exception("FOREGROUND_FAVORITES_EMPTY");
     EmptyInput(root,name);
-    var foreground=AutomationElement.FromHandle(GetForegroundWindow());
-    if(foreground.Current.ProcessId!=root.Current.ProcessId)throw new Exception("FOREGROUND_FOCUS_CHANGED");
-    Attempted=true;if(!Click(items[random.Next(items.Length)]))throw new Exception("FOREGROUND_FAVORITE_NOT_CLICKED");
-    return true;
+    int start=random.Next(items.Length);
+    for(int i=0;i<items.Length;i++)if(ClickStickerControl(items[(start+i)%items.Length],panel,true))return true;
+    throw new Exception("FOREGROUND_FAVORITE_NOT_CLICKED");
   }
 }

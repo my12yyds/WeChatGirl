@@ -7,7 +7,7 @@ import {VoiceDeliveryWorker} from './voice-delivery-worker.mjs';
 import { TextDeliveryStore } from './text-delivery-store.mjs';
 import {hookAccountProblem} from './wechat-account-check.mjs';
 import {ForegroundSender,validateTextTransport} from './foreground-sender.mjs';
-import {compatibilityMediaEnabled,foregroundFavoriteId} from '../packages/wechat-send-policy.mjs';
+import {compatibilityMediaEnabled,compatibilityStickersEnabled,stickerImageFallbackEnabled,foregroundFavoriteId} from '../packages/wechat-send-policy.mjs';
 import {validMention} from '../components/qq-bridge/src/core/group-mentions.js';
 import {proactivePolicy,withinProactiveWindow,conversationSnapshot,declinedProactive} from '../components/qq-bridge/src/core/proactive-policy.js';
 import http from 'node:http';
@@ -304,12 +304,14 @@ export class HookOneBot {
     if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
     if(!stickerPolicy(this.project.wechat,'wechat:'+kind+':'+target).enabled)return {enabled:false,stickers:[]};
     await this.checkNative();
-    if(this.project.wechat?.textTransport?.mode==='foreground')return {enabled:true,stickers:[{id:foregroundFavoriteId,label:'随机收藏表情',source:'favorite'}]};
-    if(!this.status.native_sticker_send&&compatibilityMediaEnabled(this.project))return {enabled:true,stickers:[{id:foregroundFavoriteId,label:'随机收藏表情',source:'favorite'}]};
-    if(!this.status.native_sticker_send)return {enabled:false,stickers:[]};
+    const favorite={id:foregroundFavoriteId,label:'随机收藏表情',source:'favorite'};
+    if(this.project.wechat?.textTransport?.mode==='foreground')return {enabled:true,stickers:[favorite]};
+    const imageFallback=!this.status.native_sticker_send&&this.status.native_image_send&&stickerImageFallbackEnabled(this.project);
+    const windowFallback=!this.status.native_sticker_send&&compatibilityStickersEnabled(this.project);
+    if(!this.status.native_sticker_send&&!imageFallback)return {enabled:windowFallback,stickers:windowFallback?[favorite]:[]};
     const key='wechat:'+kind+':'+target;
     const result=await this.reader('/api/v1/stickers?conversationKey='+encodeURIComponent(key)+(typeof query==='string'&&query.trim()?'&query='+encodeURIComponent(query.slice(0,500)):''));
-    return {enabled:true,stickers:(result.stickers??[]).filter(item=>/^[a-f0-9]{64}$/.test(item?.id??'')).slice(0,20).map(item=>({id:item.id,receivedAt:item.receivedAt,...(cleanStickerLabel(item)??{})}))};
+    return {enabled:true,stickers:[...(result.stickers??[]).filter(item=>/^[a-f0-9]{64}$/.test(item?.id??'')).slice(0,windowFallback?19:20).map(item=>({id:item.id,receivedAt:item.receivedAt,...(cleanStickerLabel(item)??{})})),...(windowFallback?[favorite]:[])]};
   }
   async stickerLabels(kind,target,params){
     this.reload();if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
@@ -330,7 +332,10 @@ export class HookOneBot {
     if(abandon&&(!deliveryId||!receiptOnly))fail('INVALID_RECEIPT_QUERY');
     this.reload();
     if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
-    const mode=id===foregroundFavoriteId&&compatibilityMediaEnabled(this.project)?'foreground':this.project.wechat?.textTransport?.mode??'native';
+    const key=`${kind}:${target}`;
+    const pendingMode=this.stickerPending.get(key);
+    let mode=pendingMode?.id===id&&pendingMode.deliveryId===deliveryId&&pendingMode.mode
+      ?pendingMode.mode:id===foregroundFavoriteId&&compatibilityStickersEnabled(this.project)?'foreground':this.project.wechat?.textTransport?.mode??'native';
     if(mode==='foreground'&&id!==foregroundFavoriteId)fail('HOOK_STICKER_DISABLED_IN_FOREGROUND');
     if(!/^[a-f0-9]{64}$/.test(id))fail('INVALID_STICKER_REFERENCE');
     const operation=deliveryId?this.textDeliveries.key(kind,target,deliveryId,'[STICKER:'+id+']'):null;
@@ -346,12 +351,13 @@ export class HookOneBot {
       return {released:true};
     }
     if(!stickerPolicy(this.project.wechat,'wechat:'+kind+':'+target).enabled&&!this.stickerPending.has(`${kind}:${target}`)&&completed?.state!=='confirmed')fail('STICKER_SENDING_DISABLED');
-    const key=`${kind}:${target}`;
     if(this.targetsSending.has(key)||this.targetsSending.size>=(this.hook.maxConcurrentSends??4))fail('SENDER_BUSY');
     this.targetsSending.add(key);
     try{
-      const identity=await this.checkNative();if(mode!=='foreground'&&!this.status.native_sticker_send&&completed?.state!=='confirmed')fail('NATIVE_STICKER_UNAVAILABLE');
-      const targetSession=mode==='foreground'?await this.foregroundTarget(kind,target):null;
+      const identity=await this.checkNative();
+      if(mode==='native'&&!pendingMode&&!this.status.native_sticker_send&&this.status.native_image_send&&stickerImageFallbackEnabled(this.project)&&id!==foregroundFavoriteId)mode='image';
+      if(mode==='native'&&!this.status.native_sticker_send&&!receiptOnly&&completed?.state!=='confirmed')fail('NATIVE_STICKER_UNAVAILABLE');
+      const targetSession=mode==='foreground'&&!receiptOnly?await this.foregroundTarget(kind,target):null;
       const wxid=targetSession?.username??await this.resolveTarget(kind,target),conversationKey='wechat:'+key;
       const stale=this.stickerPending.get(key);
       if(stale&&Date.now()-stale.started*1000>60000){
@@ -371,40 +377,57 @@ export class HookOneBot {
       // A persisted uncertain operation without its receipt state is terminal:
       // allow a new delivery ID, but never submit the old one a second time.
       const prior=operation?this.textDeliveries.get(operation):null;
+      if(!attempt&&prior?.state==='rejected')throw new AdapterError(prior.rejection.code,{rejected:true,attempted:false,delivery_id:deliveryId});
       if(!attempt&&prior&&prior.state!=='confirmed')fail('STICKER_RECEIPT_STATE_UNAVAILABLE');
       if(attempt && (attempt.id!==id||attempt.deliveryId!==deliveryId))fail('STICKER_PREVIOUS_DELIVERY_UNCONFIRMED');
       if(attempt && (attempt.account!==identity.account || attempt.wxid!==wxid))fail('STICKER_DELIVERY_ACCOUNT_MISMATCH');
       if(receiptOnly&&(!attempt||attempt.deliveryId&&attempt.deliveryId!==deliveryId))fail('STICKER_RECEIPT_STATE_UNAVAILABLE');
       if(!attempt){
       if(deadlineAt!==undefined&&Date.now()>=deadlineAt)fail('STICKER_DELIVERY_EXPIRED');
-      const sticker=mode==='foreground'?{id,fields:{md5:''},path:''}:await this.reader('/api/v1/stickers/'+id+'?conversationKey='+encodeURIComponent(conversationKey));
+      const sticker=mode==='foreground'?{id,fields:{md5:''},path:''}:await this.reader('/api/v1/stickers/'+id+'?conversationKey='+encodeURIComponent(conversationKey)+(mode==='image'?'&format=png':''));
       if(sticker.id!==id || mode!=='foreground'&&(sticker.conversationKey!==conversationKey || !/^[a-f0-9]{32}$/.test(sticker.fields?.md5??'')))fail('STICKER_BINDING_INVALID');
+        if(mode==='image'&&(!/^[a-f0-9]{32}$/.test(sticker.imageMd5??'')||!Number.isSafeInteger(sticker.imageSize)||sticker.imageSize<1||sticker.imageSize>8*1024*1024))fail('STICKER_BINDING_INVALID');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
-        attempt={id,md5:sticker.fields.md5,account:identity.account,wxid,deliveryId,baseline:new Set(currentRows.map(keyOf)),started:Math.floor(Date.now()/1000)-1};
+        attempt={id,mode,md5:mode==='image'?sticker.imageMd5:sticker.fields.md5,account:identity.account,wxid,deliveryId,baseline:new Set(currentRows.map(keyOf)),started:Math.floor(Date.now()/1000)-1};
         this.reload();if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
-        if(!stickerPolicy(this.project.wechat,conversationKey).enabled)fail('STICKER_SENDING_DISABLED');
+        if(!stickerPolicy(this.project.wechat,conversationKey).enabled||mode==='image'&&!stickerImageFallbackEnabled(this.project))fail('STICKER_SENDING_DISABLED');
         if(deadlineAt!==undefined&&Date.now()>=deadlineAt)fail('STICKER_DELIVERY_EXPIRED');
         this.stickerPending.set(key,attempt);
         this.persistStickerPending();
+        const reject=code=>{
+          if(operation)this.textDeliveries.put({version:1,key:operation,deliveryId,account:identity.account,wxid,text:'[STICKER:'+id+']',baseline:[],startedAt:attempt.started*1000,state:'rejected',rejection:{code,at:Date.now()}});
+          this.stickerPending.delete(key);this.persistStickerPending();
+          throw new AdapterError(code,{rejected:true,attempted:false,delivery_id:deliveryId??''});
+        };
         let accepted;
         try{accepted=mode==='foreground'?await this.foreground.send({executable:path.resolve(this.directory,this.hook.wechatExecutable),name:targetSession.displayName,favorite:true},async()=>{
           this.reload();
-          if((this.project.wechat?.textTransport?.mode!=='foreground'&&!compatibilityMediaEnabled(this.project))||!this.allowed(kind,target)||!stickerPolicy(this.project.wechat,conversationKey).enabled)fail('CONVERSATION_NOT_ALLOWED');
+          if((this.project.wechat?.textTransport?.mode!=='foreground'&&!compatibilityStickersEnabled(this.project))||!this.allowed(kind,target)||!stickerPolicy(this.project.wechat,conversationKey).enabled)fail('CONVERSATION_NOT_ALLOWED');
+          if(deadlineAt!==undefined&&Date.now()>=deadlineAt)fail('STICKER_DELIVERY_EXPIRED');
+          if((await this.checkNative()).account!==identity.account)fail('STICKER_DELIVERY_ACCOUNT_MISMATCH');
           const current=await this.foregroundTarget(kind,target);
           if(current.username!==wxid||current.displayName!==targetSession.displayName)fail('TARGET_MAPPING_AMBIGUOUS_OR_MISSING');
-        }):await this.native('/SendStickerMsg',{wxidorgid:wxid,sticker:sticker.fields,path:sticker.path},identity.account);}
-        catch(error){if(/^API_HTTP_(400|401|403|409|429)$/.test(error.message)){this.stickerPending.delete(key);this.persistStickerPending();}throw error;}
-        if(mode==='foreground'?accepted?.accepted!==true:accepted?.ret!==0){this.stickerPending.delete(key);this.persistStickerPending();fail(mode==='foreground'?'FOREGROUND_STICKER_UNCONFIRMED':'NATIVE_STICKER_REJECTED');}
+        }):mode==='image'?await this.native('/SendImgMsg',{wxidorgid:wxid,path:sticker.path,md5:attempt.md5,size:sticker.imageSize},identity.account):await this.native('/SendStickerMsg',{wxidorgid:wxid,sticker:sticker.fields,path:sticker.path},identity.account);}
+        catch(error){
+          if(/^API_HTTP_(400|401|403|409|429)$/.test(error.message))reject(error.message);
+          if(mode==='foreground'&&error instanceof AdapterError){
+            this.stickerPending.delete(key);this.persistStickerPending();throw error;
+          }
+          throw new AdapterError('STICKER_DELIVERY_UNCONFIRMED',{attempted:true,delivery_id:deliveryId??''});
+        }
+        if(mode==='foreground'){
+          if(!accepted?.accepted&&accepted?.attempted===false)reject(/^FOREGROUND_[A-Z_]{1,64}$/.test(accepted.code??'')?accepted.code:'FOREGROUND_UI_UNAVAILABLE');
+        }else if(accepted?.ret!==0)reject('NATIVE_STICKER_REJECTED');
       }
       const deadline=Date.now()+(this.receiptOverride??this.hook.receiptTimeoutMs??18000);
       do{
         for(const row of await this.messages(wxid)){
           const nativeSticker=row.localType===47 || row.localType===34359738417 || row.localType===49&&row.stickerKind==='appmsg-8';
-          if(row.isSend && nativeSticker && !attempt.baseline.has(keyOf(row)) && row.createTime>=attempt.started-29 &&
-            Number.isSafeInteger(Number(row.localId)) && Number(row.localId)>0 && /^\d+$/.test(String(row.serverId)) && BigInt(row.serverId)>0n &&
-            (mode==='foreground'||row.stickerMd5===attempt.md5)){
-            const response={message_id:Number(row.localId),receipt:'wechat-server-id',delivered:'database-confirmed',media_type:'wechat-sticker',...(mode==='foreground'?{selection:'random-favorite'}:{})};
+          const matchesMedia=mode==='image'?row.localType===3&&row.imageMd5===attempt.md5:nativeSticker&&(mode==='foreground'||row.stickerMd5===attempt.md5);
+          if(row.isSend && matchesMedia && !attempt.baseline.has(keyOf(row)) && row.createTime>=attempt.started-29 &&
+            Number.isSafeInteger(Number(row.localId)) && Number(row.localId)>0 && /^\d+$/.test(String(row.serverId)) && BigInt(row.serverId)>0n){
+            const response={message_id:Number(row.localId),receipt:'wechat-server-id',delivered:'database-confirmed',media_type:mode==='image'?'wechat-image':'wechat-sticker',...(mode==='image'?{selection:'sticker-first-frame'}:{}),...(mode==='foreground'?{selection:'random-favorite'}:{})};
             if(operation)this.textDeliveries.put({version:1,key:operation,deliveryId,account:identity.account,wxid,text:'[STICKER:'+id+']',
               baseline:[],startedAt:attempt.started*1000,state:'confirmed',confirmedAt:Date.now(),response});
             this.stickerPending.delete(key);this.persistStickerPending();this.status.confirmed_sends++;this.status.last_error='';
@@ -420,6 +443,8 @@ export class HookOneBot {
   async action(request) {
     const response = { status: 'failed', retcode: 1407, data: {}, ...(request?.echo === undefined ? {} : { echo: request.echo }) };
     this.activeActions++;
+    const isSend=String(request?.action).startsWith('send_');
+    const isSticker=isSend&&request?.params?.message?.[0]?.type==='wechat_sticker';
     try {
       if (this.activeActions > 8) fail('SENDER_BUSY');
       this.reload();
@@ -484,11 +509,20 @@ export class HookOneBot {
           .map(s => ({ id: conversationId(s.username, s.displayName, s.conversationId), name: s.displayName ?? s.username }))
           .filter(s => this.allowed(kind, s.id)).map(s => kind === 'group' ? { group_id: s.id, group_name: s.name } : { user_id: s.id, nickname: s.name, remark: s.name });
       } else fail('ACTION_UNSUPPORTED');
+      if(isSend&&!request?.params?.wechatagent_receipt_only)this.status.last_send_error='';
+      if(isSticker&&data?.delivered){
+        this.status.last_sticker_error='';
+        if(this.status.last_send_error==='STICKER_DELIVERY_UNCONFIRMED')this.status.last_send_error='';
+      }
       return { ...response, status: 'ok', retcode: 0, data };
     } catch (error) {
       const code = error instanceof AdapterError ? error.message : error?.message==='TEXT_DELIVERY_STATE_INVALID'?'TEXT_DELIVERY_STATE_INVALID':'BACKEND_UNAVAILABLE';
       this.status.last_error = code;
-      if (String(request?.action).startsWith('send_')) this.status.failed_sends++;
+      if(isSend&&!request?.params?.wechatagent_abandon_delivery){
+        this.status.failed_sends++;
+        if(!request?.params?.wechatagent_receipt_only||!this.status.last_send_error)this.status.last_send_error=code;
+        if(isSticker&&(!request?.params?.wechatagent_receipt_only||!this.status.last_sticker_error))this.status.last_sticker_error=code;
+      }
       return { ...response, data:error instanceof AdapterError&&error.data?error.data:{},retcode: code === 'ACTION_UNSUPPORTED' ? 1404 : 1407, message: code };
     } finally { this.activeActions--; }
   }

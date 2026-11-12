@@ -1,3 +1,7 @@
+import {foregroundFavoriteId} from '../../../../packages/wechat-send-policy.mjs';
+
+export const isFavoriteSticker=item=>item?.source==='favorite'&&item.id===foregroundFavoriteId;
+
 export const STICKER_CANDIDATE_LIMIT=8;
 export const STICKER_CANDIDATE_MAX=20;
 export const STICKER_REPLY_MAX=8;
@@ -34,7 +38,7 @@ export function selectStickerChoices(choices,text,seenIds,{labelCache=true,candi
   const visible=choices.filter(item=>seenIds.has(item.id)&&!labelled.some(other=>other.id===item.id));
   const unknown=requested&&!labelled.length&&!visible.length?choices.slice(0,2):[];
   const unique=new Set();
-  return [...visible,...labelled,...unknown].filter(item=>{if(unique.has(item.id))return false;unique.add(item.id);return true;}).slice(0,limit);
+  return [...choices.filter(isFavoriteSticker),...visible,...labelled,...unknown].filter(item=>{if(unique.has(item.id))return false;unique.add(item.id);return true;}).slice(0,limit);
 }
 export function splitStickerLabels(output){
   const text=String(output??'').trim();

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {configuration,scanPlugins,validateValue,atomicJson} from '../packages/plugin-api/catalog.mjs';
 import {readVoiceAttempt} from '../packages/plugin-api/voice-status.mjs';
+import {senseVoiceReady,transcribeSenseVoice} from '../packages/plugin-api/sensevoice.mjs';
 import {discoverModels,inspectConfiguration,probeTranscription,errorMessage} from '../optional-extensions/speech-recognition/lib/diagnostics.mjs';
 
 const bundled=JSON.parse(fs.readFileSync(new URL('../packages/plugin-distribution/catalog.json',import.meta.url),'utf8')).schemas['speech-recognition'];
@@ -68,7 +69,7 @@ export function createSpeechPluginConsole({root,fetchImpl=fetch,readCapabilities
   function attemptSummary(attempt){return attempt.ok?{state:'ok',ready:true,label:'最近语音转写成功',message:'微信语音已收到并完成转写。'}:{state:'error',ready:false,label:'语音已收到，转写失败',message:errorMessage(attempt.code)+'（'+attempt.code+'）'};}
   async function capabilities(){
     if(capabilityCache&&now()-capabilityAt<30000)return capabilityCache;
-    capabilityCache=await readCapabilities();capabilityAt=now();return capabilityCache;
+    capabilityCache={...await readCapabilities(),senseVoice:senseVoiceReady(root)};capabilityAt=now();return capabilityCache;
   }
   async function modelList(settings,signal,refresh=false){
     const key=digest({apiProtocol:settings.apiProtocol,requestMode:settings.requestMode,endpoint:settings.endpoint,modelsEndpoint:settings.modelsEndpoint,modelsResponsePath:settings.modelsResponsePath,apiKey:settings.apiKey,headersJson:settings.headersJson,authHeader:settings.authHeader,authPrefix:settings.authPrefix});
@@ -83,9 +84,10 @@ export function createSpeechPluginConsole({root,fetchImpl=fetch,readCapabilities
     try{
       const initial=inspectConfiguration(ctx.settings),[models,local,probe]=await Promise.all([
         modelList(ctx.settings,combined,body.refreshModels===true),capabilities(),
-        kind==='check'&&body.testAudio===true&&initial.configurationValid?probeTranscription(ctx.settings,{signal:combined,fetchImpl}):undefined,
+        kind==='check'&&body.testAudio===true&&initial.configurationValid?probeTranscription(ctx.settings,{signal:combined,fetchImpl,
+          localTranscribe:(audio,settings)=>transcribeSenseVoice(root,audio,{language:settings.language,timeoutMs:settings.timeoutMs,signal:combined})}):undefined,
       ]);
-      const configuration=inspectConfiguration(ctx.settings,local,models.models),report={checkedAt:now(),audioFormat:ctx.settings.audioFormat,models,capabilities:local,configuration};
+      const configuration=inspectConfiguration(ctx.settings,local,models.models),report={checkedAt:now(),audioFormat:ctx.settings.apiProtocol.startsWith('local-')?'wav':ctx.settings.audioFormat,models,capabilities:local,configuration};
       if(probe)report.probe={...probe,testedAt:now()};
       else if(kind==='models'&&(models.ok||models.code==='VOICE_MODELS_UNSUPPORTED')&&previousReport(ctx)?.probe)report.probe=previousReport(ctx).probe;
       if(ctx.key===ctx.savedKey)report.lastAttempt=readVoiceAttempt(root,ctx.generation);

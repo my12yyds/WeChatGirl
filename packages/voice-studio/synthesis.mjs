@@ -12,7 +12,7 @@ export async function boundedAudio(response,signal,maxBytes=24000*2*60){
   if(!response.ok){await response.body?.cancel();throw voiceError('VOICE_SYNTHESIS_HTTP_'+response.status);}
   const chunks=[];let length=0;for await(const part of response.body){if(signal?.aborted)throw voiceError('VOICE_CANCELLED');length+=part.length;if(length>maxBytes)throw voiceError('VOICE_EXCEEDS_60_SECONDS');chunks.push(Buffer.from(part));}if(length<960||length%2)throw voiceError('VOICE_AUDIO_INVALID');return Buffer.concat(chunks);
 }
-export async function synthesizeVoice(root,request,settings,{signal,fetcher=fetch,remoteJobId,onRemoteJob,onProgress=()=>{},onPcm,singing=synthesizeSinging}={}){
+export async function synthesizeVoice(root,request,settings,{signal,fetcher=fetch,remoteJobId,onRemoteJob,onProgress=()=>{},onPcm,previewOnly=false,singing=synthesizeSinging}={}){
   if(request.kind==='song'&&request.cachedOnly&&!request.playbackMode&&settings.songPlaybackMode!=='full'){const legacy=new SavedSongs(root).find(request,settings);if(legacy){onProgress('cached');return new SavedSongs(root).restore(legacy,signal);}}
   if(request.kind==='song')request={...request,playbackMode:request.playbackMode??settings.songPlaybackMode??'preview'};
   const saved=new SavedSongs(root),cached=saved.find(request,settings);if(cached){onProgress('cached');return saved.restore(cached,signal);}if(request.cachedOnly)throw voiceError('SAVED_SONG_UNAVAILABLE');
@@ -34,7 +34,7 @@ export async function synthesizeVoice(root,request,settings,{signal,fetcher=fetc
   // Ordinary reference cloning uses CFG 1; expressive direction belongs to opt-in custom voices.
   form.set('instruction',profile?.instruction||'自然清晰地说话。');form.set('cfg_scale',String(profile?.cfgScale??(profile?3:1)));if(profile?.temperature!==undefined)form.set('temperature',String(profile.temperature));if(profile?.seed!==undefined)form.set('seed',String(profile.seed));form.set('split_chars','0');form.set('max_new_tokens','750');
   onProgress('speech');const response=await fetcher(`http://127.0.0.1:${port}/v1/audio/speech`,{method:'POST',body:form,signal,redirect:'error'});
-  const rate=Number(response.headers.get('x-sample-rate'));if(rate!==24000){await response.body?.cancel();throw voiceError('VOICE_SAMPLE_RATE_INVALID');}
+  const rate=Number(response.headers.get('x-sample-rate'));if(response.ok&&rate!==24000){await response.body?.cancel();throw voiceError('VOICE_SAMPLE_RATE_INVALID');}
   pcm=await boundedAudio(response,signal);
   }
   const pitch=profile?.pitch??(style==='cute'?(settings.cutePitch??3):style==='natural'?1:0);if(!dedicated&&(useFeiyu||profile&&(pitch||profile.speed!==1)))pcm=await wavToPcm(root,pcmToWav(pcm),{signal,pitchSemitones:pitch,speed:profile?.speed??1});
@@ -45,6 +45,7 @@ export async function synthesizeVoice(root,request,settings,{signal,fetcher=fetc
   if(request.kind==='speech'&&!profile&&!external&&useFeiyu)pcm=await wavToPcm(root,pcmToWav(pcm),{signal,bassDb:-1.5,trebleDb:0.8,lightVoice:true});
   if(profile&&(profile.volume!==undefined&&profile.volume!==1||profile.bassDb||profile.trebleDb||profile.normalize||profile.trimSilence))pcm=await wavToPcm(root,pcmToWav(pcm),{signal,volume:profile.volume??1,bassDb:profile.bassDb??0,trebleDb:profile.trebleDb??0,normalize:profile.normalize??false,trimSilence:profile.trimSilence??false});
   if(signal?.aborted)throw voiceError('VOICE_CANCELLED');
+  if(previewOnly)return pcm;
   onPcm?.(pcm);onProgress('encode');const pieces=request.kind==='song'?splitSongPcm(pcm,request.playbackMode):[pcm],proofs=[];
   for(const part of pieces){const result=await encode(part,24000),data=Buffer.from(result.data),durationMs=Math.round(result.duration);
   if(data[0]!==2||data.subarray(1,10).toString()!=='#!SILK_V3'||durationMs<20||durationMs>60000||data.length>1024*1024)throw voiceError('VOICE_CODEC_INVALID');

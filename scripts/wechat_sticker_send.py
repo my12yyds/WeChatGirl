@@ -54,6 +54,42 @@ def stage_sticker_bytes(root,resource,raw):
     return {**resource,'path':str(file.resolve())}
 
 
+def stage_sticker_image(root, resource):
+    """Stage the first frame in the image sender's separate path boundary."""
+    root=pathlib.Path(root).resolve()
+    source=pathlib.Path(resource['path']).resolve()
+    scope=(root/'state/stickers').resolve()
+    if not scope.is_relative_to(root) or not source.is_relative_to(scope) or not source.is_file():
+        raise RuntimeError('STICKER_CACHE_PATH_INVALID')
+    with source.open('rb') as stream:
+        raw=stream.read(8*1024*1024+1)
+    fields=resource.get('fields',{})
+    if not 0<len(raw)<=8*1024*1024 or len(raw)!=fields.get('len') or hashlib.md5(raw).hexdigest()!=fields.get('md5'):
+        raise RuntimeError('STICKER_CACHE_INTEGRITY_FAILED')
+    with Image.open(io.BytesIO(raw)) as image:
+        if not 0<image.width<=4096 or not 0<image.height<=4096:
+            raise RuntimeError('STICKER_NATIVE_IMAGE_TOO_LARGE')
+        frame=image.convert('RGBA')
+        frame.thumbnail((1024,1024))
+        output=io.BytesIO()
+        frame.save(output,format='PNG')
+    png=output.getvalue()
+    md5=hashlib.md5(png).hexdigest()
+    folder=root/'state/hook/outgoing-images/stickers'
+    if any(node.is_symlink() for node in (root/'state',root/'state/hook',folder.parent,folder)):
+        raise RuntimeError('STICKER_CACHE_PATH_INVALID')
+    folder.mkdir(parents=True,exist_ok=True)
+    target=folder/(md5+'.png')
+    if target.is_symlink():raise RuntimeError('STICKER_CACHE_PATH_INVALID')
+    temp=folder/(uuid.uuid4().hex+'.tmp')
+    try:
+        temp.write_bytes(png)
+        temp.replace(target)
+    finally:
+        temp.unlink(missing_ok=True)
+    return {**resource,'path':str(target),'imageMd5':md5,'imageSize':len(png)}
+
+
 def native_gif_bytes(raw):
     # Keep every frame of received GIFs byte-for-byte. Static image stickers
     # need GIF encoding for the current native appmsg-8 upload path.

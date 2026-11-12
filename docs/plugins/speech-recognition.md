@@ -1,14 +1,14 @@
 # 微信语音识别
 
-版本：1.3.0 · 可选插件，按需安装
+版本：1.5.0 · 可选插件，按需安装
 
-[返回插件目录](README.md) · [下载单独插件包](https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.7/speech-recognition-1.3.0.zip)
+[返回插件目录](README.md)
 
 ## 适合做什么
 
 把收到的微信语音转为文字，供当前聊天模型理解。
 
-识别好友和群聊收到的微信语音，再由当前聊天模型回复。可读取接口模型并检测配置；需自行填写语音API，未配置、未授权的聊天不上传音频。
+识别已授权好友和群聊的语音，再由当前聊天模型回复。可使用本机 SenseVoice、本机 Whisper 或外接识别 API。
 
 ## 第一次配置
 
@@ -17,13 +17,32 @@
 3. 在“插件与聊天”选择具体好友或群聊，不需要的范围保持关闭。
 4. 保存并检查插件状态，先用简单请求验证；升级宿主接口后按提示完整重开DSH。
 
+### 使用本机 SenseVoice
+
+已安装本机组件时，选择「本机 SenseVoice（CPU）」并点击「检测配置」。测试会实际转写内置短句。随后启用插件，授予语音读取权限，按聊天授权。WAV 在本机处理，DSH 只接收转写文字。
+
+手动准备时，使用与宿主相同版本的 Windows x64 Python。将 sherpa-onnx 1.12.34 安装到工作区的 `state/asr/sensevoice/site`，将官方量化模型包的 `model.int8.onnx` 和 `tokens.txt` 放到 `state/asr/sensevoice/`。模型和依赖单独准备。 [SenseVoice 模型下载与说明](https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html)
+
+### 使用本机 Whisper
+
+1. 准备 Windows 版 whisper.cpp 与支持中文的多语种模型，例如 `ggml-base.bin`。在模型所在目录启动服务：
+
+   ```powershell
+   .\whisper-server.exe -m .\ggml-base.bin --host 127.0.0.1 --port 8080 -l zh
+   ```
+
+2. 在插件设置将“API 协议”设为“本机 Whisper 模型”。服务地址可留空使用 `http://127.0.0.1:8080/inference`。在这里无需填写模型 ID 或密钥，模型由服务器启动参数选择。
+3. 点击“检测配置”，确认短句转写和 WAV 转换均通过。启用插件、授予语音读取权限，并为需要的好友或群聊勾选该插件。
+
+本机服务收到 WAV，DSH 在聊天流程中收到转写文字。外接 API 模式会按配置把音频发送给该服务。当前 DSH 桥接负责分配转写任务和聊天回复，未接入 DSH 模型的原始音频输入。[whisper.cpp 服务说明](https://github.com/ggml-org/whisper.cpp/tree/master/examples/server)
+
 ## 使用例子
 
 在授权聊天发送一条短语音，检查转写与回复。
 
 ## 权限与数据
 
-- 读取当前微信语音（语音识别插件会上传至所配置的 API）
+- 读取当前微信语音。外接模式向所选 API 上传音频，本机模式仅请求回环服务。
 
 关闭插件停止后续调用，已有本机数据保留。总包导入不会启用插件、放宽聊天授权或覆盖已安装插件。
 
@@ -31,7 +50,7 @@
 
 | 配置 | 默认值 | 范围或选择 | 说明 |
 | --- | --- | --- | --- |
-| API 协议 | "auto" | auto / openai-transcriptions / openai-chat / chat-audio-data-url / anthropic-messages / custom | 按协议处理服务地址、鉴权和请求；自定义请求保留高级模板。 |
+| API 协议 | "auto" | auto / local-sensevoice / local-whisper / openai-transcriptions / openai-chat / chat-audio-data-url / anthropic-messages / custom | 按协议处理服务地址、鉴权和请求；自定义请求保留高级模板。 |
 | API 服务地址 | "" | 最多2048字符 | 标准协议可填写基础地址（含所需版本路径）或完整识别地址，保留网关路径前缀；自定义请求填写完整 POST 地址。 |
 | API Key | 留空，保存后加密 | 最多4096字符 | 按页面提示设置；保存后用于之后的新任务。 |
 | 密钥请求头名称 | "Authorization" | 最多100字符 | 按页面提示设置；保存后用于之后的新任务。 |

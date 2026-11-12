@@ -48,6 +48,8 @@ export function taskFailureMessage(output, code) {
   if (importError) return importError[1];
   if (/DSH_NOT_CONFIGURED/.test(output)) return '请先在“首次配置”点击“下载安装 DSH”，安装后选择 DSH 程序位置并保存设置。';
   if (/DSH_PLUGIN_NOT_READY/.test(output)) return 'DSH 桥接插件未启动。请在 DSH 连接设置核对本项目插件；若已启用，检查是否有另一套 WeChatGirl 使用相同组件 ID 覆盖了配置，修正后从托盘完整退出并重开 DSH。';
+  if (/DSH_PLUGIN_AUTH_FAILED/.test(output)) return 'DSH 插件凭据与当前项目不匹配。请重新准备连接配置，从托盘退出并重开 DSH，再刷新模型。';
+  if (/DSH_PLUGIN_WRONG_PROJECT/.test(output)) return 'DSH 加载的是另一套 WeChatGirl。请在 DSH 停用旧项目插件，导入当前项目插件，再完整重开 DSH。';
   const port=/\bport=(\d{1,5})\b/.exec(output)?.[1],portLabel=port?'端口 '+port:'配置端口';
   if (/ADAPTER_PORT_IN_USE|SERVICE_PORT_IN_USE|SERVICE_PORT_OWNER_MISMATCH/.test(output)) return portLabel+' 已被其他进程占用或绑定。点击“检查占用进程”，核对路径和 PID，经再次确认后处理；也可在连接设置中修改端口。';
   if (/ADAPTER_PORT_DENIED|SERVICE_PORT_DENIED/.test(output)) return 'Windows 拒绝绑定'+portLabel+'，可能涉及系统保留端口或访问限制。请在连接设置中更换该端口再重试；没有监听进程也可能无法使用。';
@@ -86,4 +88,33 @@ export function taskFailureMessage(output, code) {
   if (/Install the DSH plugin|Fully.*reopen DSH|ECONNREFUSED.*11230/i.test(output)) return 'DSH 插件尚未就绪。打开 DSH，启用本项目插件并完整重开后再启动。';
   if (/Invalid project configuration|configuration.*failed/i.test(output)) return '项目配置无效，请检查连接设置与人格文件。';
   return '操作未完成，请查看下方详细信息，修正配置后重试。';
+}
+
+const deliveryHints={
+  NATIVE_STICKER_UNAVAILABLE:'请在“发送模式”开启“指定表情以静态图片发送”或“兼容发送收藏表情”，并检查匹配微信的发送组件。',
+  HOOK_STICKER_DISABLED_IN_FOREGROUND:'前台发送只能选用微信收藏表情。请先在微信添加收藏，或使用支持指定表情的 Hook 版本。',
+  STICKER_SENDING_DISABLED:'此聊天已关闭表情回复。请在“聊天”检查该会话的表情发送开关。',
+  STICKER_BINDING_INVALID:'表情来源或账号与当前聊天不匹配。请刷新表情池，重新选用当前账号的素材。',
+  STICKER_DELIVERY_EXPIRED:'表情等待发送超时。请先处理正在进行的前台发送或微信弹窗，再发起一次新请求。',
+  NATIVE_STICKER_REJECTED:'微信拒绝了这张表情。请核对发送组件和表情来源，再用另一张表情测试。',
+  FOREGROUND_STICKER_PANEL_UNAVAILABLE:'未找到微信表情面板。请解锁桌面，打开匹配微信，在聊天里确认可以手动打开表情面板。',
+  FOREGROUND_FAVORITES_TAB_UNAVAILABLE:'未找到可操作的收藏表情标签。请打开微信表情面板，检查“收藏”或“添加的表情”。',
+  FOREGROUND_FAVORITES_EMPTY:'没有找到可见的收藏表情。请在微信收藏至少一张表情，打开收藏标签确认它能显示。',
+  FOREGROUND_FAVORITE_NOT_CLICKED:'收藏表情被遮挡或无法点击。请把微信窗口移到前台并保持可见。',
+  FOREGROUND_DRAFT_PRESENT:'聊天输入框有草稿或无法核对草稿。请先处理现有草稿，再试发送。',
+  FOREGROUND_WINDOW_AMBIGUOUS:'找不到唯一的匹配微信窗口。请打开已绑定的微信，并从托盘退出多余客户端。',
+  FOREGROUND_FOCUS_CHANGED:'发送期间微信失去焦点。请解锁桌面，保持微信窗口在前台后重试。',
+  FOREGROUND_UI_UNAVAILABLE:'无法操作微信窗口。请解锁桌面，确保两个程序使用相同权限，并检查前台组件。',
+  TARGET_MAPPING_AMBIGUOUS_OR_MISSING:'找不到唯一的目标聊天。请给同名好友或群设置可区分的备注，再重新选择。',
+  CONVERSATION_NOT_ALLOWED:'目标聊天没有发送权限。请在“聊天”添加目标并保存授权。',
+  SENDER_BUSY:'发送队列正忙。请等当前消息或语音投递结束后再试。',
+};
+
+export function deliveryFailureHint(code){
+  if(!/^[A-Z][A-Z0-9_]{2,79}$/.test(code??'')||code==='PROACTIVE_CONTEXT_CHANGED')return '';
+  if(Object.hasOwn(deliveryHints,code))return deliveryHints[code];
+  if(/(?:DELIVERY|SUBMISSION|RECEIPT).*UNCONFIRMED|RECEIPT_STATE_UNAVAILABLE/.test(code))return '微信可能已收到提交，但程序尚未核验回执。请先到目标聊天确认，再决定是否重发。';
+  if(/ACCOUNT_MISMATCH|HOOK_(?:AUTH_FAILED|LOGIN_REQUIRED|NOT_LISTENING|VERSION_MISMATCH)/.test(code))return '微信发送账号或组件未核验。请在配置向导重新连接并验证当前登录的微信。';
+  if(code==='BACKEND_UNAVAILABLE')return '发送服务暂不可用。请在连接诊断检查微信账号、消息桥接及发送组件。';
+  return '请打开连接诊断检查当前发送模式和服务状态，并用下方错误码定位。';
 }

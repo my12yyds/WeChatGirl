@@ -2,11 +2,11 @@
 
 一个 Windows 微信 AI 助手。给好友或群聊设置人格，让它回复消息、记住聊天内容，也可以通过微信交办已授权的 DSH 任务。
 
-[下载安装](https://github.com/my12yyds/WeChatGirl/releases/latest) · [下载包说明](docs/releases/0.5.7.md#下载哪个包) · [插件目录](docs/plugins/README.md) · [详细教程](docs/GETTING_STARTED.md)
+[下载安装](https://github.com/my12yyds/WeChatGirl/releases/latest) · [下载包说明](docs/releases/0.5.8.md#下载哪个包) · [插件目录](docs/plugins/README.md) · [详细教程](docs/GETTING_STARTED.md)
 
 ## 快速开始
 
-1. **下载安装。** Windows 10/11 x64 首选 `WeChatGirl-Setup-0.5.7-x64.exe`。便携版请完整解压，再打开根目录的 `WeChatGirl.exe`。
+1. **下载安装。** Windows 10/11 x64 首选 `WeChatGirl-Setup-0.5.8-x64.exe`。便携版请完整解压，再打开根目录的 `WeChatGirl.exe`。
 2. **连接微信。** 打开配置向导，按提示启动匹配的微信，登录并验证账号。当前内置微信为 4.1.15.13 x64，支持原生语音和歌曲分段；文件、收藏表情及指定消息引用可启用前台兼容发送。
 3. **连接 DSH。** 单独安装或选择已有的 DeepSeek Harness，登录模型账号，按向导导入并启用插件。随后从托盘完整退出并重开 DSH，再选择模型。
 4. **试一次回复。** 在「聊天」添加一个允许回复的好友，选好人格和发送模式，应用配置并启动服务。请好友发一句「你好」，确认微信收到回复。
