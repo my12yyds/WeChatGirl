@@ -2,7 +2,7 @@ import fs from 'node:fs';import path from 'node:path';import crypto from 'node:c
 import {searchPolicy} from './search-policy.mjs';
 import {memeLibraryPolicy,MEME_LIBRARY_POLICY} from './meme-library-policy.mjs';
 import {normalizeWebUrl} from './web-reader-policy.mjs';
-import {sendingMode,stickerImageFallbackEnabled} from '../wechat-send-policy.mjs';
+import {sendingMode} from '../wechat-send-policy.mjs';
 import {hookProfile} from '../../scripts/hook-profiles.mjs';
 import {Parser} from 'htmlparser2';
 const MAX_IMAGE=8*1024*1024;
@@ -106,8 +106,16 @@ export function bindMemeLibrary(agentCtx,library,root,key,turnFor,{isAllowed=()=
     try{
       const project=JSON.parse(fs.readFileSync(path.join(root,'config/wechatagent.json'),'utf8').replace(/^\uFEFF/,''));
       const version=project.hook?.expectedVersion;
+      const profile=hookProfile(version);
+      let nativeSticker=!version||profile?.nativeSticker===true;
+      if(profile?.stickerProfile){
+        try{
+          const build=JSON.parse(fs.readFileSync(path.join(root,'state/hook/native-4.1.15.13/build.json'),'utf8').replace(/^\uFEFF/,''));
+          nativeSticker=build.targetVersion===version&&build.stickerProfile===profile.stickerProfile;
+        }catch{}
+      }
       return {...memeLibraryPolicy(project.wechat,key),network:searchPolicy(project.wechat,key).enabled,
-        nativeSend:sendingMode(project)==='native'&&(!version||hookProfile(version)?.nativeSticker===true),imageSend:stickerImageFallbackEnabled(project)};
+        nativeSend:sendingMode(project)==='native'&&nativeSticker};
     }catch{return {enabled:false,allowImport:false,network:false,nativeSend:false};}
   };
   const active=()=>isAllowed()&&!!turnFor()&&!turnFor().disabled&&!turnFor().controller.signal.aborted&&policy().enabled;
@@ -134,9 +142,9 @@ export function bindMemeLibrary(agentCtx,library,root,key,turnFor,{isAllowed=()=
         }finally{turn.selecting=false;}
         signal.throwIfAborted();if(turnFor()!==turn||!active())throw Error('MEME_TURN_CHANGED');turn.selected=true;
         const delivery=policy();
-        if(delivery.nativeSend||delivery.imageSend){
+        if(delivery.nativeSend){
           turn.choices.push(result);
-          result={...result,reply:'RESPOND: [STICKER:'+result.id+']',notice:delivery.imageSend?'当前将以静态图片发送所选表情首帧，实际送达以微信回执为准。':'本次发送资源已准备，实际微信发送由桥接层核验并确认回执。'};
+          result={...result,reply:'RESPOND: [STICKER:'+result.id+']',notice:'本次发送资源已准备，实际微信发送由桥接层核验并确认回执。'};
         }else{
           result={description:result.description,collection:result.collection,librarySaved:result.librarySaved,canSend:false,
             notice:'当前发送方式无法发送图库里的指定表情。收藏状态见 collection；聊天中可选本轮提供的微信收藏表情或继续用文字回复。'};
@@ -152,7 +160,7 @@ export function bindMemeLibrary(agentCtx,library,root,key,turnFor,{isAllowed=()=
   dispose.instructions=({stable=false}={})=>{
     if(!(stable?isAllowed()&&policy().enabled:active()))return '';
     const delivery=policy();
-    if(!delivery.nativeSend&&!delivery.imageSend)return '[微信表情图库]\n本轮发送只可使用已提供的微信收藏表情编号。只有用户要求查找或收藏素材时，才调用当前可用的图库工具。图库返回 canSend=false 时，不输出该素材的 STICKER 标记。\n';
+    if(!delivery.nativeSend)return '[微信表情图库]\n本轮发送只可使用已提供的微信收藏表情编号。只有用户要求查找或收藏素材时，才调用当前可用的图库工具。图库返回 canSend=false 时，不输出该素材的 STICKER 标记。\n';
     return '[微信表情图库]\n'+(stable?'以下说明仅在本轮实际提供相应工具时适用。\n':'')+'需要表情时先用 wechat_meme_search 搜索 dsh-meme 本地图库，再用 wechat_meme_select 选择一张。只使用工具本轮确认的完整 [STICKER:资源ID] 标记，不使用 dsh-meme 网页的 [表情:描述] 标记。资源准备成功不表示微信已发送，由本项目负责回执确认。图库没有合适结果且本轮确有 wechat_meme_import 工具时，先用现有 wechat_web_search 搜索短公开素材关键词，再调用 wechat_meme_search(query,sourceUrl=本轮来源链接)提取真实图片候选，最后 select 选图；新图会经过 dsh-meme 识图核验并入库。直接图片链接可用 import 导入。每轮最多一次选图，失败继续正常文字回复。保持当前人设，不为凑图强行发图。\n';
   };
   return dispose;

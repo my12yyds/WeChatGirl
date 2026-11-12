@@ -87,27 +87,52 @@ test('foreground sticker rejection keeps the reason and uncertain clicks only re
  assert.equal((await send('delivery-B',true)).message_id,3);
  assert.equal(submits,2);
 });
-test('4.1.15.13 sends the selected first frame and verifies only its image receipt',async t=>{
+test('a previously saved image fallback cannot turn a new sticker into an image',async t=>{
+ const {hook,sends}=nativeStickerFixture(t);
+ hook.project.hook={expectedVersion:'4.1.15.13'};
+ hook.project.wechat.textTransport.stickerImageFallback=true;
+ hook.status.native_sticker_send=false;
+ hook.status.native_image_send=true;
+ hook.reader=async()=>assert.fail('An unavailable native sticker must not load an image');
+ assert.deepEqual(await hook.stickerList('private','123'),{enabled:false,stickers:[]});
+ await assert.rejects(hook.sendSticker('private','123',ids[0],'new-sticker'),/NATIVE_STICKER_UNAVAILABLE/);
+ assert.equal(sends(),0);
+ assert.equal(hook.stickerPending.size,0);
+});
+test('4.1.15.13 sends a GIF to the native sticker endpoint and matches its sticker receipt',async t=>{
+ const {hook,rows}=nativeStickerFixture(t);
+ const md5='d'.repeat(32);
+ hook.hook.expectedVersion='4.1.15.13';
+ hook.reader=async route=>{
+   assert.match(route,/&format=gif-41513$/);
+   return {id:ids[0],conversationKey:'wechat:private:123',fields:{md5,len:80},path:'fixture.gif'};
+ };
+ hook.native=async(route,body)=>{
+   assert.equal(route,'/SendStickerMsg');
+   assert.equal(body.path,'fixture.gif');
+   assert.equal(body.sticker.md5,md5);
+   const receipt={isSend:true,serverId:'9',createTime:Math.floor(Date.now()/1000)};
+   rows.push({...receipt,localId:1,localType:3,imageMd5:md5},{...receipt,localId:2,localType:47,stickerMd5:md5});
+   return {ret:0};
+ };
+ const result=await hook.sendSticker('private','123',ids[0],'native-gif');
+ assert.equal(result.message_id,2);
+ assert.equal(result.media_type,'wechat-sticker');
+});
+test('an in-flight pre-upgrade image may only be reconciled against its original receipt',async t=>{
  const {hook,rows}=nativeStickerFixture(t);
  const imageMd5='b'.repeat(32);
  hook.project.hook={expectedVersion:'4.1.15.13'};
  hook.status.native_sticker_send=false;hook.status.native_image_send=true;
- hook.reader=async route=>{
-   assert(route.endsWith('&format=png'));
-   return {id:ids[0],conversationKey:'wechat:private:123',fields:{md5:'a'.repeat(32)},imageMd5,imageSize:100,path:'fixture.png'};
- };
- let submissions=0;
- hook.native=async(route,body)=>{
-   submissions++;assert.equal(route,'/SendImgMsg');assert.equal(body.md5,imageMd5);
-   rows.push({localId:1,isSend:true,localType:3,serverId:'1',createTime:Math.floor(Date.now()/1000),imageMd5:'c'.repeat(32)});
-   return {ret:0};
- };
- await assert.rejects(hook.sendSticker('private','123',ids[0],'image-delivery'),/STICKER_DELIVERY_UNCONFIRMED/);
+ const started=Math.floor(Date.now()/1000);
+ hook.stickerPending.set('private:123',{id:ids[0],mode:'image',md5:imageMd5,account:'test-account',wxid:'test-wxid',deliveryId:'image-delivery',baseline:new Set(),started});
+ hook.native=async()=>assert.fail('A pre-upgrade image must never be resent');
+ rows.push({localId:1,isSend:true,localType:3,serverId:'1',createTime:started,imageMd5:'c'.repeat(32)});
+ await assert.rejects(hook.sendSticker('private','123',ids[0],'image-delivery',null,true),/STICKER_DELIVERY_UNCONFIRMED/);
  rows.push({...rows[0],localId:2,serverId:'2',imageMd5});
  const result=await hook.sendSticker('private','123',ids[0],'image-delivery',null,true);
  assert.equal(result.message_id,2);
  assert.equal(result.media_type,'wechat-image');assert.equal(result.selection,'sticker-first-frame');
- assert.equal(submissions,1);
 });
 test('failed media receipt does not prevent a later text reply',async t=>{
  let decisions=0;const f=fixture(t,{decide:async()=>++decisions===1?'RESPOND: [STICKER:S1]':'RESPOND: 我在',sendSticker:async()=>{throw Object.assign(Error('failed'),{code:'NATIVE_SEND_REJECTED'});}});

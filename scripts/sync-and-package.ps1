@@ -1,5 +1,5 @@
 param(
- [string]$Version='0.5.8',
+ [string]$Version='0.5.9',
  [string]$Baseline='D:\weixiagen\release\archive\WeChatAgent-0.4.3',
  [string]$ClientRoot='D:\weixiagen\data\workspace\state\hook\wechat-4.1.15.13',
  [string]$HookRoot='D:\weixiagen\data\workspace\state\hook\native-4.1.15.13',
@@ -51,6 +51,8 @@ $hookBuild=Get-Content -LiteralPath (Join-Path $hookPath 'build.json') -Raw|Conv
 if($hookBuild.targetVersion -ne $wechatVersion -or $hookBuild.profile -ne '4.1.15.13-media-mentions-v2' -or $hookBuild.loaderInit -ne 'worker-path-v1' -or $hookBuild.voiceProfile -ne 'recording-factory-v1' -or
  (Get-FileHash -LiteralPath (Join-Path $hookPath 'wechatagent-text-4.1.15.13.dll')).Hash.ToLowerInvariant() -ne $hookBuild.sha256 -or
  (Get-FileHash -LiteralPath (Join-Path $hookPath 'wechatagent-text-loader.exe')).Hash.ToLowerInvariant() -ne $hookBuild.loaderSha256){throw 'Hook 4.1.15.13 profile/hash mismatch.'}
+if($hookBuild.stickerProfile -ne 'gif-manager-v1' -or $hookBuild.stickerCoreSha256 -ne '10f8e995453e2da46d4f2b5080cd6da1f13cc5147746adc119ceae38cb039de5' -or
+ (Get-FileHash -LiteralPath (Join-Path $clientPath "$wechatVersion/Weixin.dll")).Hash.ToLowerInvariant() -ne $hookBuild.stickerCoreSha256){throw 'The native GIF sender and WeChat core fingerprint do not match.'}
 function Copy-Tree([string]$Source,[string]$Destination,[string[]]$ExcludeDirs=@(),[string[]]$ExcludeFiles=@()){
  New-Item -ItemType Directory -Path $Destination -Force|Out-Null
  $copyArgs=@($Source,$Destination,'/E','/COPY:DAT','/DCOPY:DAT','/R:2','/W:2','/NFL','/NDL','/NP')

@@ -45,9 +45,10 @@ $commandFile = Join-Path $output 'build.cmd'
 if ($LASTEXITCODE -ne 0) { throw 'Current-version native text build failed.' }
 $manifest = @{
     targetVersion='4.1.15.13'; profile='4.1.15.13-media-mentions-v2'; integration='WeChatAgent-1'; loaderInit='worker-path-v1'; voiceProfile='recording-factory-v1';
-    nativeTextSend=$true; nativeImageSend=$true; nativeMentionSend=$true; nativeQuoteSend=$false; nativeStickerSend=$false;
+    nativeTextSend=$true; nativeImageSend=$true; nativeMentionSend=$true; nativeQuoteSend=$false;
+    stickerProfile='gif-manager-v1'; stickerCoreSha256='10f8e995453e2da46d4f2b5080cd6da1f13cc5147746adc119ceae38cb039de5';
     sha256=(Get-FileHash -LiteralPath (Join-Path $output 'wechatagent-text-4.1.15.13.dll') -Algorithm SHA256).Hash.ToLowerInvariant();
     loaderSha256=(Get-FileHash -LiteralPath (Join-Path $output 'wechatagent-text-loader.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'build.json') -Encoding UTF8
-Write-Output 'Built 4.1.15.13 native sender with a guarded voice construction probe; no WeChat process was changed.'
+Write-Output 'Built 4.1.15.13 native sender with guarded voice and GIF support; no WeChat process was changed.'

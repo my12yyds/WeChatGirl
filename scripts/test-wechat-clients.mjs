@@ -47,6 +47,9 @@ test('version cards escape executable metadata and provide a disabled startup bu
  const esc=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
  const markup=renderClientResult(clientCatalog({clients:[{...verified,path:'<img src=x onerror=bad>'}],nativeReady:true}),esc);
  assert.ok(markup.includes('&lt;img'));assert.ok(!markup.includes('<img'));assert.match(wechatClientsCard(),/data-wechat-bundled-open disabled/);
+ assert.match(markup,/使用并打开 4\.1\.10\.27（原生图库表情）/);
+ const unavailable=renderClientResult(clientCatalog({clients:[verified],nativeReady:false}),esc);
+ assert.doesNotMatch(unavailable,/data-wechat-compatible-open/);
 });
 test('the live version-detection endpoint requires the console token and serves its UI module',async t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'wechat-client-api-'));

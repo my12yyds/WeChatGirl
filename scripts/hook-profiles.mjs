@@ -1,6 +1,6 @@
 // Capability/version selection, not permission to apply one version's offsets to another.
 export const hookProfiles=Object.freeze({
   '4.1.10.27':Object.freeze({loader:'version-proxy',nativeText:true,nativeSticker:true}),
-  '4.1.15.13':Object.freeze({loader:'explicit-text',id:'4.1.15.13-media-mentions-v2',nativeText:true,nativeImageApi:true,nativeMentionApi:true,nativeSticker:false}),
+  '4.1.15.13':Object.freeze({loader:'explicit-text',id:'4.1.15.13-media-mentions-v2',nativeText:true,nativeImageApi:true,nativeMentionApi:true,stickerProfile:'gif-manager-v1'}),
 });
 export const hookProfile=version=>typeof version==='string'&&Object.hasOwn(hookProfiles,version)?hookProfiles[version]:null;

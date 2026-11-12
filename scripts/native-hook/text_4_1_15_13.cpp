@@ -4,11 +4,14 @@
 #include <Windows.h>
 #include <winternl.h>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <vector>
@@ -23,6 +26,7 @@ using namespace WeChatAgentText41513;
 std::filesystem::path ConfigFile;
 uintptr_t base=0;std::mutex sendMutex;std::atomic<bool> probeReady{false},faulted{false};
 std::atomic<bool> voiceReady{false};
+std::atomic<bool> stickerReady{false},stickerBusy{false};
 std::atomic<unsigned> phase{0};
 std::atomic<uintptr_t> actualMessageTable{0},receiverLength{0},receiverCapacity{0},contentLength{0},contentCapacity{0};
 std::string nativeCppError;
@@ -255,6 +259,162 @@ DWORD GuardVoice(const std::string* target,const std::string* silk,uint32_t dura
     __try{VoiceCatching(*target,*silk,duration,submit);return 0;}__except(EXCEPTION_EXECUTE_HANDLER){return GetExceptionCode();}
 }
 
+bool StickerProfileMatches(){
+    const BYTE factory[]={0x55,0x56,0x57,0x48,0x83,0xec,0x30,0x48,0x8d,0x6c,0x24,0x30};
+    const BYTE scheduler[]={0x55,0x41,0x57,0x41,0x56,0x56,0x57,0x53,0x48,0x81,0xec,0xc8};
+    const BYTE queue[]={0x55,0x41,0x57,0x41,0x56,0x56,0x57,0x53,0x48,0x83,0xec,0x78};
+    return !memcmp(reinterpret_cast<void*>(base+StickerFactoryRva),factory,sizeof(factory))&&
+        !memcmp(reinterpret_cast<void*>(base+PostTaskRva),scheduler,sizeof(scheduler))&&
+        !memcmp(reinterpret_cast<void*>(base+QueueMessageRva),queue,sizeof(queue));
+}
+std::wstring CheckedSticker(const std::string& value,const std::filesystem::path& root,const json& fields){
+    const auto md5=fields.value("md5","");
+    const auto size=fields.at("len").get<int64_t>();
+    if(!root.is_absolute()||value.empty()||value.size()>1023||value.find('\0')!=std::string::npos||
+       md5.size()!=32||md5.find_first_not_of("0123456789abcdef")!=std::string::npos||size<14||size>1024*1024)
+        throw std::runtime_error("invalid GIF metadata");
+    const auto supplied=std::filesystem::u8path(value);
+    if(!supplied.is_absolute()||std::filesystem::is_symlink(supplied))throw std::runtime_error("invalid GIF path");
+    const auto file=std::filesystem::canonical(supplied);
+    if(file.parent_path()!=std::filesystem::canonical(root)||file.filename().u8string()!=md5+".gif"||
+       !std::filesystem::is_regular_file(file)||std::filesystem::file_size(file)!=static_cast<uint64_t>(size))
+        throw std::runtime_error("GIF outside outgoing directory or size mismatch");
+    std::ifstream in(file,std::ios::binary);
+    unsigned char header[10]{};
+    in.read(reinterpret_cast<char*>(header),sizeof(header));
+    const auto width=header[6]+256*header[7],height=header[8]+256*header[9];
+    if(!in||(memcmp(header,"GIF87a",6)&&memcmp(header,"GIF89a",6))||
+       width<1||width>1024||height<1||height>1024)throw std::runtime_error("invalid GIF header or dimensions");
+    return file.wstring();
+}
+struct NativeReference{
+    void* object=nullptr;uintptr_t control=0;
+    explicit operator bool()const{return object&&control;}
+};
+struct OwnedNativeReference:NativeReference{
+    ~OwnedNativeReference(){ReleaseShared(control);}
+};
+struct GifInspection{
+    uint64_t valid=0;
+    uintptr_t image[2]{};
+    uint32_t width=0,height=0;
+    ~GifInspection(){if(image[0])reinterpret_cast<void(__fastcall*)(void*)>(base+ReleaseGifImageRva)(image);}
+};
+static_assert(sizeof(NativeReference)==16&&sizeof(GifInspection)==32,"unexpected sticker ABI");
+struct StickerResult{
+    uint64_t status=UINT64_MAX;
+    alignas(8) unsigned char reason[32]{};
+    NativeReference reference{};
+    unsigned char reserved[72]{};
+    ~StickerResult(){
+        ReleaseShared(reference.control);
+        const auto capacity=Word(reason,24);
+        if(capacity<=15||capacity>=1024*1024)return;
+        auto* memory=reinterpret_cast<void*>(Word(reason,0));
+        auto size=capacity+1;
+        if(size>=4096){memory=reinterpret_cast<void**>(memory)[-1];size+=39;}
+        Delete(memory,size);
+    }
+};
+static_assert(sizeof(StickerResult)==128,"unexpected send result ABI");
+bool StickerAccountMatches(const OwnedNativeReference& context,const std::string& bound){
+    if(!context||Word(context.object,0)!=base+AccountTable)return false;
+    auto* id=static_cast<BYTE*>(context.object)+0x48;
+    const auto size=Word(id,16),capacity=Word(id,24);
+    if(!size||size>128||capacity<size||capacity>4096||size>bound.size())return false;
+    const auto* value=capacity<=15?reinterpret_cast<const char*>(id):*reinterpret_cast<char* const*>(id);
+    if(!value||memcmp(bound.data(),value,size))return false;
+    return bound.size()==size||(bound.size()==size+5&&bound[size]=='_'&&
+        bound.find_first_not_of("0123456789abcdefghijklmnopqrstuvwxyz",size+1)==std::string::npos);
+}
+enum class StickerOutcome{accepted,rejected,unavailable,uncertain};
+StickerOutcome SendStickerOnTask(const std::string& target,const std::wstring& file,const std::string& account,bool send){
+    using GetReference=NativeReference*(__fastcall*)(NativeReference*);
+    using GetChild=NativeReference*(__fastcall*)(void*,NativeReference*);
+    using Validate=int(__fastcall*)(const std::wstring*);
+    using Inspect=GifInspection*(__fastcall*)(GifInspection*,const std::wstring*);
+    using Queue=void*(__fastcall*)(void*,StickerResult*,NativeReference*,uint8_t);
+    static_assert(sizeof(std::wstring)==32,"unexpected path ABI");
+    OwnedNativeReference context,service,manager,message,current;
+    reinterpret_cast<GetReference>(base+AccountContextRva)(&context);
+    if(!StickerAccountMatches(context,account))return StickerOutcome::unavailable;
+    if(reinterpret_cast<Validate>(base+CheckGifRva)(&file)!=2)return StickerOutcome::rejected;
+    GifInspection details;
+    reinterpret_cast<Inspect>(base+InspectGifRva)(&details,&file);
+    if(!(details.valid&0xff)||!details.width||details.width>1024||!details.height||details.height>1024)return StickerOutcome::rejected;
+    reinterpret_cast<GetReference>(base+StickerFactoryRva)(&message);
+    if(!message||Word(message.object,0)!=base+StickerMessageTable)return StickerOutcome::unavailable;
+    auto* bytes=static_cast<BYTE*>(message.object);
+    *reinterpret_cast<uint32_t*>(bytes+0x118)=47;
+    Word(bytes,0x778)=uint64_t(details.width)|(uint64_t(details.height)<<32);
+    SetString(bytes+0xb0,target);
+    SetWideString(bytes+0x120,file);
+    if(!send)return StickerOutcome::accepted;
+    reinterpret_cast<GetChild>(base+ServicesRva)(context.object,&service);
+    if(!service)return StickerOutcome::unavailable;
+    reinterpret_cast<GetChild>(base+MessageManagerRva)(service.object,&manager);
+    reinterpret_cast<GetReference>(base+AccountContextRva)(&current);
+    if(!manager||current.object!=context.object||!StickerAccountMatches(current,account)||
+       Accounts()!=std::set<std::string>{account})return StickerOutcome::unavailable;
+    StickerResult result;
+    NativeReference queued=message;
+    InterlockedIncrement(reinterpret_cast<volatile LONG*>(message.control+8));
+    reinterpret_cast<Queue>(base+QueueMessageRva)(manager.object,&result,&queued,1);
+    return result.status==0?StickerOutcome::accepted:StickerOutcome::uncertain;
+}
+void RunStickerCatching(const std::string& target,const std::wstring& file,const std::string& account,bool send,StickerOutcome& result){
+    try{result=SendStickerOnTask(target,file,account,send);}catch(...){result=StickerOutcome::uncertain;}
+}
+DWORD GuardStickerTask(const std::string* target,const std::wstring* file,const std::string* account,bool send,StickerOutcome* result){
+    __try{RunStickerCatching(*target,*file,*account,send,*result);return 0;}__except(EXCEPTION_EXECUTE_HANDLER){return GetExceptionCode();}
+}
+bool PostStickerTask(std::function<void()>& callback){
+    struct Location{const char* function;const char* source;uint32_t line,reserved;void* address;};
+    static_assert(sizeof(Location)==32&&sizeof(std::function<void()>)==64,"unexpected scheduler ABI");
+    using GetApp=void*(__fastcall*)();
+    using GetScheduler=NativeReference*(__fastcall*)(void*,NativeReference*);
+    using Post=NativeReference*(__fastcall*)(void*,NativeReference*,Location*,std::function<void()>*,uint32_t);
+    static Location location{"WeChatGirl.SendSticker","WeChatGirl",1,0,nullptr};
+    void* app=reinterpret_cast<GetApp>(base+ApplicationRva)();
+    if(!app)return false;
+    OwnedNativeReference scheduler,task;
+    reinterpret_cast<GetScheduler>(base+SchedulerRva)(app,&scheduler);
+    if(!scheduler)return false;
+    reinterpret_cast<Post>(base+PostTaskRva)(scheduler.object,&task,&location,&callback,1);
+    return true;
+}
+DWORD GuardStickerSchedule(std::function<void()>* callback,bool* posted){
+    __try{*posted=PostStickerTask(*callback);return 0;}__except(EXCEPTION_EXECUTE_HANDLER){return GetExceptionCode();}
+}
+StickerOutcome ScheduleSticker(const std::string& target,const std::wstring& file,const std::string& account,bool send){
+    struct Job{std::atomic<int> phase{0};std::promise<StickerOutcome> result;};
+    auto job=std::make_shared<Job>();
+    auto completion=job->result.get_future();
+    std::function<void()> callback=[job,target,file,account,send]{
+        int waiting=0;
+        if(!job->phase.compare_exchange_strong(waiting,1))return;
+        StickerOutcome result=StickerOutcome::uncertain;
+        if(GuardStickerTask(&target,&file,&account,send,&result)||result==StickerOutcome::uncertain)stickerReady=false;
+        stickerBusy=false;
+        job->result.set_value(result);
+    };
+    if(stickerBusy.exchange(true))return StickerOutcome::unavailable;
+    bool posted=false;
+    if(GuardStickerSchedule(&callback,&posted)||!posted){
+        int waiting=0;
+        if(job->phase.compare_exchange_strong(waiting,2))stickerBusy=false;
+        stickerReady=false;
+        return StickerOutcome::uncertain;
+    }
+    if(completion.wait_for(std::chrono::seconds(4))==std::future_status::ready)return completion.get();
+    int waiting=0;
+    if(job->phase.compare_exchange_strong(waiting,2)){
+        stickerBusy=false;
+        return StickerOutcome::unavailable;
+    }
+    return StickerOutcome::uncertain;
+}
+
 DWORD WINAPI Run(void* module){
     std::vector<wchar_t> path(32768);
     const DWORD length=GetModuleFileNameW(static_cast<HMODULE>(module),path.data(),static_cast<DWORD>(path.size()));
@@ -275,6 +435,8 @@ DWORD WINAPI Run(void* module){
         voiceReady=GuardVoice(&probeTarget,&probeSilk,1000,false)==0&&nativeCppError.empty();
     }
     Event(voiceReady?"voice-construction-probe-passed":"voice-construction-probe-unavailable");
+    const auto stickerRoot=std::filesystem::u8path(config.value("stickerRoot",""));
+    stickerReady=config.value("stickerProfile","")=="gif-manager-v1"&&stickerRoot.is_absolute()&&StickerProfileMatches();
     httplib::Server server;server.set_payload_max_length(65536);
     auto authorized=[token](const httplib::Request& req,httplib::Response& res){
         const std::string expected="Bearer "+token,supplied=req.get_header_value("Authorization");
@@ -287,7 +449,7 @@ DWORD WINAPI Run(void* module){
         res.set_content(json({{"backend","wechat-hook"},{"integration","WeChatAgent-1"},{"profile","4.1.15.13-media-mentions-v2"},{"startupState",probeReady.load()&&!faulted.load()?"ready":"failed"},{"version",Version()},
           {"pid",GetCurrentProcessId()},{"databaseAccounts",Accounts()},{"nativeTextSend",probeReady.load()&&!faulted.load()},
           {"nativeImageSend",probeReady.load()&&!faulted.load()},{"nativeMentionSend",probeReady.load()&&!faulted.load()},
-          {"nativeQuoteSend",false},{"nativeStickerSend",false},{"nativeVoiceSend",voiceReady.load()&&!faulted.load()},{"voiceProfile","recording-factory-v1"},{"loaderInit","worker-path-v1"},{"phase",phase.load()},{"faulted",faulted.load()},
+          {"nativeQuoteSend",false},{"nativeStickerSend",stickerReady.load()&&!faulted.load()},{"stickerProfile",stickerReady.load()?"gif-manager-v1":""},{"nativeVoiceSend",voiceReady.load()&&!faulted.load()},{"voiceProfile","recording-factory-v1"},{"loaderInit","worker-path-v1"},{"phase",phase.load()},{"faulted",faulted.load()},
           {"diagnostics",{{"messageTableRva",actualMessageTable.load()},{"receiverLength",receiverLength.load()},
             {"receiverCapacity",receiverCapacity.load()},{"contentLength",contentLength.load()},{"contentCapacity",contentCapacity.load()}}}}).dump(),"application/json");
     });
@@ -320,6 +482,28 @@ DWORD WINAPI Run(void* module){
             res.status=409;res.set_content("{\"ret\":1,\"error\":\"native backend or account not ready\"}","application/json");return false;
         }return true;
     };
+    const auto stickerRequest=[&](const httplib::Request& req,httplib::Response& res,bool send){
+        if(!authorized(req,res))return;
+        std::lock_guard<std::mutex> lock(sendMutex);
+        if(!readyFor(req,res))return;
+        const auto reply=[&](int status,const char* message){res.status=status;res.set_content(json({{"ret",status==200?0:1},{"retmsg",message}}).dump(),"application/json");};
+        if(!stickerReady){reply(409,"sticker profile unavailable");return;}
+        std::string target;std::wstring file;
+        try{
+            const auto body=json::parse(req.body);target=body.value("wxidorgid","");
+            if(!ValidTarget(target))throw std::runtime_error("invalid sticker target");
+            file=CheckedSticker(body.value("path",""),stickerRoot,body.at("sticker"));
+        }catch(...){reply(400,"invalid sticker GIF");return;}
+        const auto result=ScheduleSticker(target,file,req.get_header_value("X-WeChatAgent-Account"),send);
+        if(result==StickerOutcome::accepted){
+            Event(send?"native-sticker-send-accepted":"native-sticker-construction-passed");
+            reply(200,send?"accepted":"constructed without sending");
+        }else if(result==StickerOutcome::rejected){reply(400,"invalid sticker GIF");}
+        else if(result==StickerOutcome::unavailable){reply(409,"sticker context unavailable");}
+        else{reply(503,"sticker submission uncertain");}
+    };
+    server.Post("/WeChatAgent/sticker-probe",[&](const httplib::Request& req,httplib::Response& res){stickerRequest(req,res,false);});
+    server.Post("/SendStickerMsg",[&](const httplib::Request& req,httplib::Response& res){stickerRequest(req,res,true);});
     server.Post("/SendImgMsg",[&](const httplib::Request& req,httplib::Response& res){
         if(!authorized(req,res))return;std::lock_guard<std::mutex> lock(sendMutex);if(!readyFor(req,res))return;
         std::string target,file;uint64_t bytes=0;

@@ -91,7 +91,7 @@ export function taskFailureMessage(output, code) {
 }
 
 const deliveryHints={
-  NATIVE_STICKER_UNAVAILABLE:'请在“发送模式”开启“指定表情以静态图片发送”或“兼容发送收藏表情”，并检查匹配微信的发送组件。',
+  NATIVE_STICKER_UNAVAILABLE:'当前微信未加载支持指定表情的组件。请在配置向导检查微信与发送组件，再从托盘完整退出并重开匹配微信。4.1.15.13 也可开启“兼容发送收藏表情”。',
   HOOK_STICKER_DISABLED_IN_FOREGROUND:'前台发送只能选用微信收藏表情。请先在微信添加收藏，或使用支持指定表情的 Hook 版本。',
   STICKER_SENDING_DISABLED:'此聊天已关闭表情回复。请在“聊天”检查该会话的表情发送开关。',
   STICKER_BINDING_INVALID:'表情来源或账号与当前聊天不匹配。请刷新表情池，重新选用当前账号的素材。',

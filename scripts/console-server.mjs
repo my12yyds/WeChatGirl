@@ -39,7 +39,7 @@ import {createSpeechPluginConsole} from './speech-plugin-console.mjs';
 import {hostCompatibility} from '../packages/plugin-api/contract.mjs';
 import {ForegroundSender} from './foreground-sender.mjs';
 import {createClientDetector} from './wechat-clients.mjs';
-import {compatibilityStickersEnabled,stickerImageFallbackEnabled} from '../packages/wechat-send-policy.mjs';
+import {compatibilityStickersEnabled} from '../packages/wechat-send-policy.mjs';
 import {createVideoConsole,VIDEO_INPUT_LIMIT} from './video-console.mjs';
 
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
@@ -490,12 +490,11 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         const status=results[0].status==='fulfilled'?results[0].value:{services:[]},adapter=results[1].status==='fulfilled'?results[1].value:{},pool=results[2].status==='fulfilled'?results[2].value:null;
         const readerReady=status.services.some(service=>service.id==='reader'&&service.ready),bridgeReady=status.services.some(service=>service.id==='bridge'&&service.ready);
         const native=mode!=='foreground'&&adapter.native_sticker_send===true,foreground=mode==='foreground'||!native&&compatibilityStickersEnabled(project);
-        const imageFallback=!native&&adapter.native_image_send===true&&stickerImageFallbackEnabled(project);
-        const sendDetail=native?'Hook 支持原生指定表情。':imageFallback?'可发送指定表情的静态首帧。'+(foreground?'也可选微信随机收藏。':''):foreground?'从微信收藏随机选一张。请在微信添加至少一张收藏表情，并保持桌面解锁、微信窗口可操作。':project.hook.expectedVersion==='4.1.15.13'?deliveryFailureHint('NATIVE_STICKER_UNAVAILABLE'):'请打开匹配微信，启动服务后检查发送组件。';
+        const sendDetail=native?'Hook 支持原生指定表情。':foreground?'从微信收藏随机选一张。请在微信添加至少一张收藏表情，并保持桌面解锁、微信窗口可操作。':project.hook.expectedVersion==='4.1.15.13'?deliveryFailureHint('NATIVE_STICKER_UNAVAILABLE'):'请打开匹配微信，启动服务后检查发送组件。';
         return reply(200,{checks:[
           {label:'微信读取服务',ok:readerReady,detail:readerReady?'已连接，可读取当前账号表情。':'读取服务未就绪，请先在配置向导连接并验证微信。'},
           {label:'消息桥接服务',ok:bridgeReady,detail:bridgeReady?'收发连接已就绪。':'请启动服务并检查微信发送连接。'},
-          {label:'表情发送方式',ok:bridgeReady&&(native||foreground||imageFallback),detail:sendDetail},
+          {label:'表情发送方式',ok:bridgeReady&&(native||foreground),detail:sendDetail},
           {label:foreground?'微信收藏':'当前账号共享池',ok:foreground?null:!!pool&&pool.count>0,detail:foreground?'请在微信表情面板手动检查收藏。账号共享池中的素材与微信收藏分别管理。':pool?'已加载 '+pool.count+' 张表情。'+(pool.count?'仍需在目标聊天允许发送。':'可手动添加表情，或启用收集。'):'表情池无法连接，请先恢复读取服务。'},
         ],issue:sendIssue(adapter.last_sticker_error)});
       }

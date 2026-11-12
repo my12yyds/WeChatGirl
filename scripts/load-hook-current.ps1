@@ -24,7 +24,13 @@ if ($token -notmatch '^[a-f0-9]{64}$') { throw 'HOOK_TOKEN_MISSING' }
 [IO.File]::WriteAllText((Join-Path $native 'wechatagent-hook.token'),$token,[Text.UTF8Encoding]::new($false))
 $imageRoot = Join-Path $root 'state\hook\outgoing-images'
 New-Item -ItemType Directory -Path $imageRoot -Force | Out-Null
-@{baseUrl=$BaseUrl.TrimEnd('/');expectedVersion='4.1.15.13';imageRoot=[IO.Path]::GetFullPath($imageRoot);voiceRoot=(Join-Path $root 'state\voice\outgoing')} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $native 'wechatagent-hook.json') -Encoding UTF8
+$stickerProfile=''
+if($build.stickerProfile -eq 'gif-manager-v1' -and $build.stickerCoreSha256 -eq '10f8e995453e2da46d4f2b5080cd6da1f13cc5147746adc119ceae38cb039de5' -and
+   (Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLowerInvariant() -eq $build.stickerCoreSha256){
+    $stickerProfile=$build.stickerProfile
+}
+@{baseUrl=$BaseUrl.TrimEnd('/');expectedVersion='4.1.15.13';imageRoot=[IO.Path]::GetFullPath($imageRoot);voiceRoot=(Join-Path $root 'state\voice\outgoing');
+    stickerProfile=$stickerProfile;stickerRoot=(Join-Path $root 'state\stickers\outgoing')} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $native 'wechatagent-hook.json') -Encoding UTF8
 if ($PrepareOnly) { Write-Output 'Current-version text sender prepared; no process changed.'; return }
 $processes = @(Get-CimInstance Win32_Process -Filter "Name='Weixin.exe'" | Where-Object { $_.ExecutablePath -eq $Executable -and $_.CommandLine -notmatch '--type=|--crashpad-handler' })
 if ($processes.Count -ne 1) { throw 'Open exactly one matching WeChat main process before loading its native text sender.' }
@@ -41,7 +47,8 @@ if (-not $listener.Count) {
 . (Join-Path $PSScriptRoot 'hook-client-health.ps1')
 Wait-HookClient $Executable $BaseUrl '4.1.15.13' $tokenFile
 $health = Invoke-RestMethod -Uri ($BaseUrl.TrimEnd('/')+'/WeChatAgent/health') -Headers @{Authorization='Bearer '+$token} -TimeoutSec 2
-if($health.profile -ne $build.profile -or $health.loaderInit -ne $build.loaderInit -or ($build.voiceProfile -and $health.voiceProfile -ne $build.voiceProfile) -or $health.nativeTextSend -ne $true -or $health.nativeImageSend -ne $true -or $health.nativeMentionSend -ne $true){
+if($health.profile -ne $build.profile -or $health.loaderInit -ne $build.loaderInit -or ($build.voiceProfile -and $health.voiceProfile -ne $build.voiceProfile) -or
+    ($stickerProfile -and $health.stickerProfile -ne $stickerProfile) -or $health.nativeTextSend -ne $true -or $health.nativeImageSend -ne $true -or $health.nativeMentionSend -ne $true){
     throw 'An older sender is still loaded. Exit/reopen the matching WeChat normally, then load this build; no automatic unload or restart was attempted.'
 }
 Write-Output 'Current-version native text/image/mention APIs ready; finish login and run hook:check.'

@@ -54,8 +54,8 @@ def stage_sticker_bytes(root,resource,raw):
     return {**resource,'path':str(file.resolve())}
 
 
-def stage_sticker_image(root, resource):
-    """Stage the first frame in the image sender's separate path boundary."""
+def stage_current_sticker(root, resource):
+    """Keep GIF animation while preparing it for the 4.1.15.13 sender."""
     root=pathlib.Path(root).resolve()
     source=pathlib.Path(resource['path']).resolve()
     scope=(root/'state/stickers').resolve()
@@ -64,30 +64,33 @@ def stage_sticker_image(root, resource):
     with source.open('rb') as stream:
         raw=stream.read(8*1024*1024+1)
     fields=resource.get('fields',{})
-    if not 0<len(raw)<=8*1024*1024 or len(raw)!=fields.get('len') or hashlib.md5(raw).hexdigest()!=fields.get('md5'):
+    if not 0<len(raw)<=8*1024*1024 or not raw.startswith((b'GIF87a',b'GIF89a')) or len(raw)!=fields.get('len') or hashlib.md5(raw).hexdigest()!=fields.get('md5'):
         raise RuntimeError('STICKER_CACHE_INTEGRITY_FAILED')
     with Image.open(io.BytesIO(raw)) as image:
-        if not 0<image.width<=4096 or not 0<image.height<=4096:
+        count=image.n_frames
+        if not 0<image.width<=4096 or not 0<image.height<=4096 or count>64 or image.width*image.height*count>80_000_000:
             raise RuntimeError('STICKER_NATIVE_IMAGE_TOO_LARGE')
-        frame=image.convert('RGBA')
-        frame.thumbnail((1024,1024))
-        output=io.BytesIO()
-        frame.save(output,format='PNG')
-    png=output.getvalue()
-    md5=hashlib.md5(png).hexdigest()
-    folder=root/'state/hook/outgoing-images/stickers'
-    if any(node.is_symlink() for node in (root/'state',root/'state/hook',folder.parent,folder)):
-        raise RuntimeError('STICKER_CACHE_PATH_INVALID')
-    folder.mkdir(parents=True,exist_ok=True)
-    target=folder/(md5+'.png')
-    if target.is_symlink():raise RuntimeError('STICKER_CACHE_PATH_INVALID')
-    temp=folder/(uuid.uuid4().hex+'.tmp')
-    try:
-        temp.write_bytes(png)
-        temp.replace(target)
-    finally:
-        temp.unlink(missing_ok=True)
-    return {**resource,'path':str(target),'imageMd5':md5,'imageSize':len(png)}
+        if len(raw)<=1024*1024 and max(image.size)<=1024:
+            return stage_sticker_bytes(root,resource,raw)
+        loop=image.info.get('loop')
+        for edge in (1024,768,512,384,256,192,128):
+            frames=[];durations=[]
+            for index in range(count):
+                image.seek(index)
+                frame=image.convert('RGBA')
+                frame.thumbnail((edge,edge),Image.Resampling.LANCZOS)
+                frames.append(frame)
+                durations.append(max(20,int(image.info.get('duration',100))))
+            output=io.BytesIO()
+            frames[0].save(output,format='GIF',save_all=True,append_images=frames[1:],duration=durations,
+                           optimize=True,**({'loop':loop} if loop is not None else {}))
+            gif=output.getvalue()
+            if len(gif)<=1024*1024:
+                converted={**resource,'sha256':hashlib.sha256(gif).hexdigest(),
+                           'fields':{**fields,'md5':hashlib.md5(gif).hexdigest(),'len':len(gif),
+                                     'width':frames[0].width,'height':frames[0].height}}
+                return stage_sticker_bytes(root,converted,gif)
+    raise RuntimeError('STICKER_NATIVE_IMAGE_TOO_LARGE')
 
 
 def native_gif_bytes(raw):

@@ -7,5 +7,5 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("WeChatGirl")]
 [assembly: AssemblyCopyright("Copyright © my12yyds")]
 [assembly: ComVisible(false)]
-[assembly: AssemblyVersion("0.5.8.0")]
-[assembly: AssemblyFileVersion("0.5.8.0")]
+[assembly: AssemblyVersion("0.5.9.0")]
+[assembly: AssemblyFileVersion("0.5.9.0")]

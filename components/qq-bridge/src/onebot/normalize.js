@@ -31,7 +31,7 @@ export function normalizeOneBotEvent(platform, adapter, event) {
     sender_name: String(event.sender?.card ?? event.sender?.nickname ?? senderId),
     ...(platform==='wechat'&&kind==='group'&&/^[a-f0-9]{64}$/.test(event.wechatagent?.memberId??'')?{sender_key:event.wechatagent.memberId}:{}),
     self_id: String(event.self_id ?? ''), message_id: String(event.message_id ?? `local-${fingerprint}`),
-    message_type: messageType ?? 'unknown', text: text || (images.length ? '[图片]' : ''), images, files, timestamp, segments, raw: event,
+    message_type: messageType ?? 'unknown', text: text || (images.length ? '[图片]' : voice ? '[语音，尚未转写]' : ''), images, files, timestamp, segments, raw: event,
     ...(voice?{voice:{id:voice.data.voice_id,durationSeconds:voice.data.duration}}:{}),
     ...(platform==='wechat' && event.wechatagent?.interaction==='pat'?{interaction:'pat'}:{}),
     ...(platform==='wechat' && normalizeForwardedRecord(event.wechatagent?.forwardedRecord)?{forwardedRecord:normalizeForwardedRecord(event.wechatagent.forwardedRecord)}:{}),

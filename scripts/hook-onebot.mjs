@@ -7,7 +7,7 @@ import {VoiceDeliveryWorker} from './voice-delivery-worker.mjs';
 import { TextDeliveryStore } from './text-delivery-store.mjs';
 import {hookAccountProblem} from './wechat-account-check.mjs';
 import {ForegroundSender,validateTextTransport} from './foreground-sender.mjs';
-import {compatibilityMediaEnabled,compatibilityStickersEnabled,stickerImageFallbackEnabled,foregroundFavoriteId} from '../packages/wechat-send-policy.mjs';
+import {compatibilityMediaEnabled,compatibilityStickersEnabled,foregroundFavoriteId} from '../packages/wechat-send-policy.mjs';
 import {validMention} from '../components/qq-bridge/src/core/group-mentions.js';
 import {proactivePolicy,withinProactiveWindow,conversationSnapshot,declinedProactive} from '../components/qq-bridge/src/core/proactive-policy.js';
 import http from 'node:http';
@@ -306,9 +306,8 @@ export class HookOneBot {
     await this.checkNative();
     const favorite={id:foregroundFavoriteId,label:'随机收藏表情',source:'favorite'};
     if(this.project.wechat?.textTransport?.mode==='foreground')return {enabled:true,stickers:[favorite]};
-    const imageFallback=!this.status.native_sticker_send&&this.status.native_image_send&&stickerImageFallbackEnabled(this.project);
     const windowFallback=!this.status.native_sticker_send&&compatibilityStickersEnabled(this.project);
-    if(!this.status.native_sticker_send&&!imageFallback)return {enabled:windowFallback,stickers:windowFallback?[favorite]:[]};
+    if(!this.status.native_sticker_send)return {enabled:windowFallback,stickers:windowFallback?[favorite]:[]};
     const key='wechat:'+kind+':'+target;
     const result=await this.reader('/api/v1/stickers?conversationKey='+encodeURIComponent(key)+(typeof query==='string'&&query.trim()?'&query='+encodeURIComponent(query.slice(0,500)):''));
     return {enabled:true,stickers:[...(result.stickers??[]).filter(item=>/^[a-f0-9]{64}$/.test(item?.id??'')).slice(0,windowFallback?19:20).map(item=>({id:item.id,receivedAt:item.receivedAt,...(cleanStickerLabel(item)??{})})),...(windowFallback?[favorite]:[])]};
@@ -334,7 +333,7 @@ export class HookOneBot {
     if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
     const key=`${kind}:${target}`;
     const pendingMode=this.stickerPending.get(key);
-    let mode=pendingMode?.id===id&&pendingMode.deliveryId===deliveryId&&pendingMode.mode
+    const mode=pendingMode?.id===id&&pendingMode.deliveryId===deliveryId&&pendingMode.mode
       ?pendingMode.mode:id===foregroundFavoriteId&&compatibilityStickersEnabled(this.project)?'foreground':this.project.wechat?.textTransport?.mode??'native';
     if(mode==='foreground'&&id!==foregroundFavoriteId)fail('HOOK_STICKER_DISABLED_IN_FOREGROUND');
     if(!/^[a-f0-9]{64}$/.test(id))fail('INVALID_STICKER_REFERENCE');
@@ -355,8 +354,6 @@ export class HookOneBot {
     this.targetsSending.add(key);
     try{
       const identity=await this.checkNative();
-      if(mode==='native'&&!pendingMode&&!this.status.native_sticker_send&&this.status.native_image_send&&stickerImageFallbackEnabled(this.project)&&id!==foregroundFavoriteId)mode='image';
-      if(mode==='native'&&!this.status.native_sticker_send&&!receiptOnly&&completed?.state!=='confirmed')fail('NATIVE_STICKER_UNAVAILABLE');
       const targetSession=mode==='foreground'&&!receiptOnly?await this.foregroundTarget(kind,target):null;
       const wxid=targetSession?.username??await this.resolveTarget(kind,target),conversationKey='wechat:'+key;
       const stale=this.stickerPending.get(key);
@@ -383,15 +380,16 @@ export class HookOneBot {
       if(attempt && (attempt.account!==identity.account || attempt.wxid!==wxid))fail('STICKER_DELIVERY_ACCOUNT_MISMATCH');
       if(receiptOnly&&(!attempt||attempt.deliveryId&&attempt.deliveryId!==deliveryId))fail('STICKER_RECEIPT_STATE_UNAVAILABLE');
       if(!attempt){
-      if(deadlineAt!==undefined&&Date.now()>=deadlineAt)fail('STICKER_DELIVERY_EXPIRED');
-      const sticker=mode==='foreground'?{id,fields:{md5:''},path:''}:await this.reader('/api/v1/stickers/'+id+'?conversationKey='+encodeURIComponent(conversationKey)+(mode==='image'?'&format=png':''));
-      if(sticker.id!==id || mode!=='foreground'&&(sticker.conversationKey!==conversationKey || !/^[a-f0-9]{32}$/.test(sticker.fields?.md5??'')))fail('STICKER_BINDING_INVALID');
-        if(mode==='image'&&(!/^[a-f0-9]{32}$/.test(sticker.imageMd5??'')||!Number.isSafeInteger(sticker.imageSize)||sticker.imageSize<1||sticker.imageSize>8*1024*1024))fail('STICKER_BINDING_INVALID');
+        if(mode==='native'&&!this.status.native_sticker_send)fail('NATIVE_STICKER_UNAVAILABLE');
+        if(deadlineAt!==undefined&&Date.now()>=deadlineAt)fail('STICKER_DELIVERY_EXPIRED');
+        const format=this.hook.expectedVersion==='4.1.15.13'?'&format=gif-41513':'';
+        const sticker=mode==='foreground'?{id,fields:{md5:''},path:''}:await this.reader('/api/v1/stickers/'+id+'?conversationKey='+encodeURIComponent(conversationKey)+format);
+        if(sticker.id!==id || mode!=='foreground'&&(sticker.conversationKey!==conversationKey || !/^[a-f0-9]{32}$/.test(sticker.fields?.md5??'')))fail('STICKER_BINDING_INVALID');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
-        attempt={id,mode,md5:mode==='image'?sticker.imageMd5:sticker.fields.md5,account:identity.account,wxid,deliveryId,baseline:new Set(currentRows.map(keyOf)),started:Math.floor(Date.now()/1000)-1};
+        attempt={id,mode,md5:sticker.fields.md5,account:identity.account,wxid,deliveryId,baseline:new Set(currentRows.map(keyOf)),started:Math.floor(Date.now()/1000)-1};
         this.reload();if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
-        if(!stickerPolicy(this.project.wechat,conversationKey).enabled||mode==='image'&&!stickerImageFallbackEnabled(this.project))fail('STICKER_SENDING_DISABLED');
+        if(!stickerPolicy(this.project.wechat,conversationKey).enabled)fail('STICKER_SENDING_DISABLED');
         if(deadlineAt!==undefined&&Date.now()>=deadlineAt)fail('STICKER_DELIVERY_EXPIRED');
         this.stickerPending.set(key,attempt);
         this.persistStickerPending();
@@ -408,7 +406,7 @@ export class HookOneBot {
           if((await this.checkNative()).account!==identity.account)fail('STICKER_DELIVERY_ACCOUNT_MISMATCH');
           const current=await this.foregroundTarget(kind,target);
           if(current.username!==wxid||current.displayName!==targetSession.displayName)fail('TARGET_MAPPING_AMBIGUOUS_OR_MISSING');
-        }):mode==='image'?await this.native('/SendImgMsg',{wxidorgid:wxid,path:sticker.path,md5:attempt.md5,size:sticker.imageSize},identity.account):await this.native('/SendStickerMsg',{wxidorgid:wxid,sticker:sticker.fields,path:sticker.path},identity.account);}
+        }):await this.native('/SendStickerMsg',{wxidorgid:wxid,sticker:sticker.fields,path:sticker.path},identity.account);}
         catch(error){
           if(/^API_HTTP_(400|401|403|409|429)$/.test(error.message))reject(error.message);
           if(mode==='foreground'&&error instanceof AdapterError){
@@ -424,6 +422,7 @@ export class HookOneBot {
       do{
         for(const row of await this.messages(wxid)){
           const nativeSticker=row.localType===47 || row.localType===34359738417 || row.localType===49&&row.stickerKind==='appmsg-8';
+          // A pre-upgrade image submission can still be reconciled, never submitted again.
           const matchesMedia=mode==='image'?row.localType===3&&row.imageMd5===attempt.md5:nativeSticker&&(mode==='foreground'||row.stickerMd5===attempt.md5);
           if(row.isSend && matchesMedia && !attempt.baseline.has(keyOf(row)) && row.createTime>=attempt.started-29 &&
             Number.isSafeInteger(Number(row.localId)) && Number(row.localId)>0 && /^\d+$/.test(String(row.serverId)) && BigInt(row.serverId)>0n){

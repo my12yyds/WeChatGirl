@@ -5,7 +5,7 @@ from PIL import Image
 from wechat_sticker_collection import StickerCollection,MAX_ENTRIES
 from wechat_sticker_manager import StickerManager
 from wechat_meme_library import import_library_sticker,send_resources
-from wechat_sticker_send import stage_sticker_image
+from wechat_sticker_send import stage_current_sticker
 
 KEY='wechat:private:123'
 def gif(number):
@@ -25,21 +25,27 @@ class IntakeTests(unittest.TestCase):
         return self.pool.store(raw,{'md5':md5,'len':len(raw)},md5,KEY,number+1,self.pool.bound_id(KEY,digest),external=external)
     def import_dsh(self,number):
         return import_library_sticker(self.reader,{'conversationKey':KEY,'b64':base64.b64encode(gif(number)).decode(),'description':'synthetic sticker','tags':['fixture']})
-    def test_compatibility_image_preserves_the_selected_first_frame(self):
+    def test_current_sender_resizes_large_gif_and_keeps_animation(self):
         output=io.BytesIO()
-        Image.new('RGB',(8,8),'red').save(output,format='GIF',save_all=True,append_images=[Image.new('RGB',(8,8),'blue')],duration=100,loop=0)
+        Image.new('RGB',(1200,24),'red').save(output,format='GIF',save_all=True,append_images=[Image.new('RGB',(1200,24),'blue')],duration=[90,140],loop=0)
         raw=output.getvalue()
         folder=self.root/'state/stickers'
         folder.mkdir(parents=True,exist_ok=True)
         source=folder/'animated.gif'
         source.write_bytes(raw)
-        result=stage_sticker_image(self.root,{'id':'a'*64,'path':str(source),'fields':{'len':len(raw),'md5':hashlib.md5(raw).hexdigest()}})
+        result=stage_current_sticker(self.root,{'id':'a'*64,'path':str(source),'format':'gif','fields':{'len':len(raw),'md5':hashlib.md5(raw).hexdigest()}})
         target=pathlib.Path(result['path'])
-        self.assertTrue(target.is_relative_to(self.root/'state/hook/outgoing-images'))
-        self.assertEqual(hashlib.md5(target.read_bytes()).hexdigest(),result['imageMd5'])
+        self.assertTrue(target.is_relative_to(self.root/'state/stickers/outgoing'))
+        self.assertEqual(target.suffix,'.gif')
+        self.assertEqual(hashlib.md5(target.read_bytes()).hexdigest(),result['fields']['md5'])
         with Image.open(target) as frame:
+            self.assertEqual(frame.n_frames,2)
+            self.assertLessEqual(max(frame.size),1024)
             self.assertEqual(frame.convert('RGB').getpixel((0,0)),(255,0,0))
-            self.assertEqual(frame.n_frames,1)
+            self.assertEqual(frame.info['duration'],90)
+            frame.seek(1)
+            self.assertEqual(frame.convert('RGB').getpixel((0,0)),(0,0,255))
+            self.assertEqual(frame.info['duration'],140)
         self.assertEqual(source.read_bytes(),raw)
     def test_four_combinations_and_temporary_send(self):
         for index,(wechat,dsh) in enumerate(((False,False),(True,False),(False,True),(True,True))):

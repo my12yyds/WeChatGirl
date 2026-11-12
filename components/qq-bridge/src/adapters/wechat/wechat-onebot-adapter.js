@@ -34,7 +34,11 @@ export class WechatOneBotAdapter extends BaseAdapter {
     if (event?.post_type === 'meta_event') {if(event.self_id)this.selfId=String(event.self_id);this.emit('meta', event); return; }
     const message = normalizeOneBotEvent('wechat', 'wechat-onebot', event);
     if (!message) return;
-    if (!['text','image','file'].includes(message.message_type)||message.message_type==='file'&&!message.files.length || message.message_type === 'image' && !message.images.length) { this.log(`[WeChat] unsupported_message_type=${message.message_type}`); return; }
+    const supported=message.message_type==='text'||
+      message.message_type==='image'&&message.images.length>0||
+      message.message_type==='file'&&message.files.length>0||
+      message.message_type==='record'&&!!message.voice;
+    if(!supported){this.log(`[WeChat] unsupported_message_type=${message.message_type}`);return;}
     if (!message.text) return;
     const now = Date.now(); this.#prune(now);
     const key = this.#fingerprint(message.kind, message.conversation_id, message.text);

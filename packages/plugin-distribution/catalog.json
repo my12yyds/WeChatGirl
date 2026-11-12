@@ -1,5 +1,5 @@
 {
-  "version": "0.5.8",
+  "version": "0.5.9",
   "entries": [
     {
       "id": "cosyvoice-engine",
@@ -10,7 +10,7 @@
       "file": "cosyvoice-engine-1.0.1.zip",
       "bytes": 3488,
       "sha256": "545cf10156379c9ac6f24a6f1da543117f672eca59fe1b3eca9ee4d7f8aaadce",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/cosyvoice-engine-1.0.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/cosyvoice-engine-1.0.1.zip"
     },
     {
       "id": "memory-evaluation",
@@ -21,7 +21,7 @@
       "file": "memory-evaluation-1.0.1.zip",
       "bytes": 3285,
       "sha256": "bd635b873f8f6a565fe84f747025029e6fd8dcaa97af89e5766fb453d819f752",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/memory-evaluation-1.0.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/memory-evaluation-1.0.1.zip"
     },
     {
       "id": "group-behavior",
@@ -32,7 +32,7 @@
       "file": "group-behavior-1.0.1.zip",
       "bytes": 5191,
       "sha256": "1d64de63fc6dd60580d1b46530a52b11e855e7d5a2f6c5693336d120ffa9c8e7",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/group-behavior-1.0.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/group-behavior-1.0.1.zip"
     },
     {
       "id": "local-voice-model",
@@ -43,7 +43,7 @@
       "file": "local-voice-model-1.0.0.zip",
       "bytes": 2437,
       "sha256": "8d55f400a384aed165dc51d49a51e8b459450c623b308314347fef44c100af4d",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/local-voice-model-1.0.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/local-voice-model-1.0.0.zip"
     },
     {
       "id": "memory-retrieval",
@@ -54,7 +54,7 @@
       "file": "memory-retrieval-1.2.1.zip",
       "bytes": 6758,
       "sha256": "448755e2dd654a6c3a48728a2d77d189b804a04bc2f68e5a054ded5997e01d1f",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/memory-retrieval-1.2.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/memory-retrieval-1.2.1.zip"
     },
     {
       "id": "memory-events",
@@ -65,7 +65,7 @@
       "file": "memory-events-1.2.1.zip",
       "bytes": 6213,
       "sha256": "4a37ba61cddf7640ffbfffeba9a45513f9dd1646efa35280936ee8bba5e036aa",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/memory-events-1.2.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/memory-events-1.2.1.zip"
     },
     {
       "id": "admin-dsh",
@@ -76,7 +76,7 @@
       "file": "admin-dsh-1.1.0.zip",
       "bytes": 2939,
       "sha256": "3e7d22aeeac237c6f28001b1c326be06439d29f92518b5f007691832634c05ca",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/admin-dsh-1.1.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/admin-dsh-1.1.0.zip"
     },
     {
       "id": "bilibili-public",
@@ -87,7 +87,7 @@
       "file": "bilibili-public-1.0.0.zip",
       "bytes": 3201,
       "sha256": "e6abe15655d0cf92dc077ab0331db355a656f42df71508417645e617b71803e8",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/bilibili-public-1.0.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/bilibili-public-1.0.0.zip"
     },
     {
       "id": "fish-notebook",
@@ -98,7 +98,7 @@
       "file": "fish-notebook-1.0.0.zip",
       "bytes": 6038,
       "sha256": "1a59683563aae6a7ac3f94ae6baeda2fe5ed3cbe902883eae1a6cd1b76c1ebd0",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/fish-notebook-1.0.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/fish-notebook-1.0.0.zip"
     },
     {
       "id": "netease-music",
@@ -109,7 +109,7 @@
       "file": "netease-music-1.1.0.zip",
       "bytes": 3285,
       "sha256": "019f4995ac644f47d709804282f7adf0c4c68ea41e164b9d4fa612f762628cfc",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/netease-music-1.1.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/netease-music-1.1.0.zip"
     },
     {
       "id": "people-memory",
@@ -120,7 +120,7 @@
       "file": "people-memory-1.3.0.zip",
       "bytes": 6579,
       "sha256": "c76d89ab66b56b0ff6ae779cb2e2d6e2d3f98a8e80259ee646f073014754f4d9",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/people-memory-1.3.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/people-memory-1.3.0.zip"
     },
     {
       "id": "persona-moments",
@@ -131,7 +131,7 @@
       "file": "persona-moments-0.3.1.zip",
       "bytes": 17422,
       "sha256": "f38bc43a8abef12e05437e029595a724c2a76467f6620e25998bead56fb223ab",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/persona-moments-0.3.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/persona-moments-0.3.1.zip"
     },
     {
       "id": "persona-studio",
@@ -142,7 +142,7 @@
       "file": "persona-studio-1.1.0.zip",
       "bytes": 5823,
       "sha256": "ff430faa0d0abca156041009b3db20ad33a99bdb25047264e9afc98f0e27cebd",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/persona-studio-1.1.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/persona-studio-1.1.0.zip"
     },
     {
       "id": "speech-recognition",
@@ -153,7 +153,7 @@
       "file": "speech-recognition-1.5.0.zip",
       "bytes": 79952,
       "sha256": "8358fda76bcc00d3358cafe6fc5fd6d22e5ab93a9c6069e7728aca6fb009a42b",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/speech-recognition-1.5.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/speech-recognition-1.5.0.zip"
     },
     {
       "id": "voice-studio",
@@ -164,7 +164,7 @@
       "file": "voice-studio-1.4.1.zip",
       "bytes": 7940,
       "sha256": "08b33b8221f0d4f5c0d6a1340f235b299b6043b7a5e2b1a2427b8d7b975616bb",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/voice-studio-1.4.1.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/voice-studio-1.4.1.zip"
     },
     {
       "id": "video-workbench",
@@ -175,7 +175,7 @@
       "file": "video-workbench-1.1.0.zip",
       "bytes": 2210,
       "sha256": "4edb9eabde0b46bebafc00e0dca71b49a05ccb92c3e26bbb54011bf815fc8b5e",
-      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/video-workbench-1.1.0.zip"
+      "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/video-workbench-1.1.0.zip"
     }
   ],
   "schemas": {
@@ -378,9 +378,9 @@
     }
   },
   "all": {
-    "file": "WeChatGirl-plugins-all-0.5.8.zip",
+    "file": "WeChatGirl-plugins-all-0.5.9.zip",
     "bytes": 163555,
-    "sha256": "abc7356084fe09e4a5fae0fe7b69af066f05fc17fd119d0392db6051bbecfe62",
-    "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.8/WeChatGirl-plugins-all-0.5.8.zip"
+    "sha256": "c26c38beffc74ec89e0436b6c1a2713c01c56191c66fdc65e515e0497cec9557",
+    "url": "https://github.com/my12yyds/WeChatGirl/releases/download/v0.5.9/WeChatGirl-plugins-all-0.5.9.zip"
   }
 }

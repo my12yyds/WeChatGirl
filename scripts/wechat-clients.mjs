@@ -15,7 +15,7 @@ export function clientCatalog(result){
     const status=!supported?'此版本没有匹配组件，请使用内置匹配版。':
       !intact?'客户端文件、架构或腾讯签名不匹配。':
       !nativeReady?'匹配的发送组件未准备完成。':
-      current?'基础兼容版，支持文字、群 @ 和图片；普通文件和收藏表情可启用前台兼容发送。原生语音需发送组件通过就绪检查。':'版本、核心文件、腾讯签名及发送组件均匹配。';
+      current?'支持文字、群 @ 和图片。原生语音和图库表情需检查对应发送组件是否就绪。普通文件可启用前台兼容发送。':'版本、核心文件、腾讯签名及发送组件均匹配。支持指定图库表情原生发送。';
     return {...row,supported,intact,canLaunch,tool:canLaunch?'wechat-hook-'+row.version:null,status};
   });
   return {expectedVersion:BUNDLED_WECHAT_VERSION,clients,bundled:clients.find(row=>row.bundled)??null,

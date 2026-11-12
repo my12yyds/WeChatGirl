@@ -14,6 +14,7 @@ import {packZip} from '../packages/plugin-api/zip.mjs';
 import {createAudioReader} from '../packages/plugin-api/audio.mjs';
 import {VoiceIngress} from '../components/qq-bridge/src/core/voice-ingress.js';
 import {normalizeOneBotEvent} from '../components/qq-bridge/src/onebot/normalize.js';
+import {WechatOneBotAdapter} from '../components/qq-bridge/src/adapters/wechat/wechat-onebot-adapter.js';
 
 const source=path.resolve('optional-extensions/speech-recognition'),manifest=inspectPackage(source),defaults=manifest.settings;
 const id='a'.repeat(64),key='wechat:private:123',other='wechat:group:456';
@@ -143,4 +144,30 @@ test('asynchronous permission checks cannot exceed the two-upload concurrency li
 test('normalization admits only bounded reader references, never arbitrary audio URLs',()=>{
   const event={message_type:'private',user_id:123,self_id:99,message:[{type:'text',data:{text:'[语音]'}},{type:'record',data:{voice_id:id,file:'wechatagent://voice/'+id,duration:2}}]};
   assert.equal(normalizeOneBotEvent('wechat','wechat-onebot',event).voice.id,id);event.message[1].data.file='https://example.com/private-audio';assert.equal(normalizeOneBotEvent('wechat','wechat-onebot',event).voice,undefined);
+});
+
+test('the WeChat adapter forwards a valid record to transcription and delivers its text for reply',async t=>{
+  const adapter=new WechatOneBotAdapter();
+  const forwarded=[],replies=[];
+  const ingress=new VoiceIngress({
+    recognize:async message=>{
+      assert.deepEqual(message.voice,{id,durationSeconds:2});
+      assert.equal(message.text,'[语音，尚未转写]');
+      return {ok:true,text:'语音识别测试'};
+    },
+    deliver:message=>replies.push(message),
+  });
+  t.after(()=>ingress.stop());
+  adapter.onMessage(message=>forwarded.push(ingress.push(message)));
+  const event={post_type:'message',message_type:'private',user_id:123,self_id:99,message_id:'voice-ok',
+    message:[{type:'record',data:{voice_id:id,file:'wechatagent://voice/'+id,duration:2}}]};
+  adapter.server.emit('event',event);
+  adapter.server.emit('event',event);
+  adapter.server.emit('event',{...event,message_id:'remote-url',
+    message:[{type:'text',data:{text:'[语音]'}},{type:'record',data:{voice_id:id,file:'https://example.invalid/voice',duration:2}}]});
+  await Promise.all(forwarded);
+  assert.equal(forwarded.length,1);
+  assert.equal(replies.length,1);
+  assert.equal(replies[0].message_type,'text');
+  assert.match(replies[0].text,/语音转写.*语音识别测试/);
 });
