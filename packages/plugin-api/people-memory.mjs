@@ -2,14 +2,41 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {directory,atomicJson} from './catalog.mjs';
-import {selfFacts,sharingConfirmed,memoryQueryTokens} from './people-facts.mjs';
+import {selfFacts,sharingConfirmed,memoryQueryTokens,conversationEpisodes} from './people-facts.mjs';
 import {memorySettings} from './memory-policy.mjs';
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const HEX=/^[a-f0-9]{64}$/,KEY=/^wechat:(private|group):[1-9]\d{0,15}$/;
 const rememberRequest=/记住|记一下|记得|以后叫我|请叫我|我喜欢|我习惯|我的偏好|我叫|remember|call me|i prefer/i;
 const clean=value=>String(value??'').replace(/[\u0000-\u001f\u007f]/g,' ').trim();
 const noteRevision=note=>hash(JSON.stringify(note));
-function auditNote(note,at,reason){note.history=[...(note.history??[]),{text:note.text,visibility:note.visibility,pinned:note.pinned===true,deletedAt:note.deletedAt??null,at,reason,version:note.version??1}].slice(-8);note.version=(note.version??1)+1;}
+function auditNote(note,at,reason){note.history=[...(note.history??[]),{text:note.text,visibility:note.visibility,pinned:note.pinned===true,deletedAt:note.deletedAt??null,at,reason,version:note.version??1,...(note.episode?{episodeState:note.episode.state}:{})}].slice(-8);note.version=(note.version??1)+1;}
+
+function saveEpisode(person,chat,evidence,episode,now,retention,maxNotes){
+  const id=hash(JSON.stringify([person.id,chat,'episode',episode.text,episode.day]));
+  if(person.notes.some(note=>note.id===id||note.episode?.updatedFrom===evidence.evidenceId&&note.episode.topic===episode.topic))return false;
+  const related=person.notes.filter(note=>note.chat===chat&&!note.deletedAt&&!note.correctedAt&&note.expiresAt>now&&
+    note.episode?.state==='planned'&&note.episode.topic===episode.topic&&evidence.at>=note.episode.observedAt&&
+    (episode.day?episode.day===note.episode.day:episode.state==='cancelled'||Date.parse(note.episode.day+'T00:00:00+08:00')<=evidence.at));
+  if(episode.state!=='planned'&&related.length===1){
+    const note=related[0];
+    auditNote(note,now,episode.state==='cancelled'?'聊天中确认取消':'聊天中确认完成');
+    note.episode={...note.episode,state:episode.state,updatedFrom:evidence.evidenceId};
+    note.modifiedAt=now;note.expiresAt=now+retention;
+    return true;
+  }
+  if(episode.state==='cancelled'||person.notes.length>maxNotes)return false;
+  if(person.notes.length===maxNotes){
+    const expired=person.notes.findIndex(note=>note.episode&&!note.pinned&&!note.deletedAt&&!note.correctedAt&&note.expiresAt<=now);
+    if(expired<0)return false;
+    person.notes.splice(expired,1);
+  }
+  const scheduled=Date.parse(episode.day+'T23:59:59+08:00');
+  const retainFrom=episode.state==='planned'&&Number.isFinite(scheduled)?Math.max(now,Math.min(scheduled,now+365*86400000)):now;
+  const {text,...metadata}=episode;
+  person.notes.push({id,text,visibility:'chat',chat,evidenceId:evidence.evidenceId,at:now,expiresAt:retainFrom+retention,
+    episode:{...metadata,observedAt:evidence.at}});
+  return true;
+}
 export function peopleObservations(key,rows){
   return rows.filter(row=>!row.outgoing&&!row.forwardedRecord&&!row.quoteReply&&row.interaction!=='pat'&&typeof row.sender_wxid==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(row.sender_wxid))
     .slice(-20).map(row=>({senderId:row.sender_wxid,...(HEX.test(row.sender_key??'')?{memberId:row.sender_key}:{}),name:clean(row.sender_name).slice(0,80),evidenceId:hash(JSON.stringify([key,row.sender_wxid,row.message_id||row.id])),text:String(row.text??'').slice(0,1000),at:Math.floor(row.timestamp*1000)}));
@@ -26,15 +53,25 @@ export class PeopleMemory{
   }
   observations(turn){if(!KEY.test(turn?.conversationKey??''))return [];return (Array.isArray(turn.peopleObservations)?turn.peopleObservations:[]).slice(-20).filter(row=>row&&/^[A-Za-z0-9_-]{1,128}$/.test(row.senderId??'')&&HEX.test(row.evidenceId??'')&&typeof row.name==='string'&&row.name.length<=80&&typeof row.text==='string'&&row.text.length<=1000&&Number.isSafeInteger(row.at)&&row.at>this.now()-86400000&&row.at<this.now()+60000).map(row=>({...row,personId:hash(this.accountId+'\0'+row.senderId)}));}
   current(turn){const rows=this.observations(turn);return [...new Set(rows.map(row=>row.personId))].map(id=>({id,name:rows.findLast(row=>row.personId===id).name,evidence:rows.filter(row=>row.personId===id).map(row=>({id:row.evidenceId,text:row.text,at:row.at}))}));}
-  capture(turn){return this.mutate(()=>this.captureUnlocked(turn));}
-  captureUnlocked(turn){
-    const rows=this.observations(turn);if(!rows.length)return {saved:0};const data=this.read();let saved=0,changed=false;
+  capture(turn,{episodesOnly=false}={}){
+    if(!KEY.test(turn?.conversationKey??'')||!this.allowedSource(turn.conversationKey))return {saved:0};
+    const rows=this.observations(turn).map(row=>({...row,episodes:this.settings.rememberPlan?conversationEpisodes(row.text,row.at):[]}))
+      .filter(row=>!episodesOnly||row.episodes.length).sort((a,b)=>a.at-b.at);
+    if(!rows.length)return {saved:0};
+    return this.mutate(()=>this.captureUnlocked(turn,rows,episodesOnly));
+  }
+  captureUnlocked(turn,rows,episodesOnly){
+    const data=this.read();let saved=0,changed=false;
     for(const evidence of rows){
       const known=data.people[evidence.personId];if(!known&&Object.keys(data.people).length>=1000)continue;
       const observed=known??{id:evidence.personId,names:[],notes:[],firstSeenAt:evidence.at};const names=[evidence.name,...observed.names].filter((value,index,array)=>value&&array.indexOf(value)===index).slice(0,5);
       const archiveIds=[...new Set([hash(evidence.senderId),...(HEX.test(evidence.memberId??'')?[evidence.memberId]:[]),...(observed.archiveIds??[])])].slice(0,20);
       if(!known||JSON.stringify(names)!==JSON.stringify(observed.names)||JSON.stringify(archiveIds)!==JSON.stringify(observed.archiveIds)||evidence.at>Number(observed.lastSeenAt??0)){observed.names=names;observed.archiveIds=archiveIds;observed.lastSeenAt=Math.max(evidence.at,observed.lastSeenAt??0);data.people[evidence.personId]=observed;changed=true;}
-      for(const fact of selfFacts(evidence.text)){
+      for(const episode of evidence.episodes){
+        if(saveEpisode(observed,turn.conversationKey,evidence,episode,this.now(),this.settings.planRetentionDays*86400000,this.settings.maxNotesPerPerson))saved++;
+      }
+      for(const fact of episodesOnly?[]:selfFacts(evidence.text)){
+        if(fact.category==='plan'&&evidence.episodes.some(episode=>episode.text.includes(fact.text)))continue;
         if(this.settings['remember'+fact.category[0].toUpperCase()+fact.category.slice(1)]===false)continue;
         const id=evidence.personId,visibility=this.settings.allowCrossChat&&sharingConfirmed(evidence.text)?'person':'chat';
         const person=data.people[id]??{id,names:[],notes:[],firstSeenAt:evidence.at};
@@ -42,7 +79,7 @@ export class PeopleMemory{
         // Keep deletion tombstones: replaying the same source message cannot restore a forgotten note.
         if(person.notes.some(note=>note.id===noteId)){data.people[id]=person;continue;}
         if(person.notes.length>=this.settings.maxNotesPerPerson)continue;
-        for(const old of person.notes){if(old.deletedAt||old.chat!==turn.conversationKey&&(old.visibility!=='person'||!this.allowedSource(old.chat)))continue;if(selfFacts(old.text).some(previous=>previous.key===fact.key&&(previous.polarity!==fact.polarity||['nickname','pet','activity','project'].includes(fact.category)&&previous.value!==fact.value))){auditNote(old,this.now(),'本人新陈述修正');old.deletedAt=this.now();old.supersededBy=noteId;}}
+        for(const old of person.notes){if(old.episode||old.deletedAt||old.chat!==turn.conversationKey&&(old.visibility!=='person'||!this.allowedSource(old.chat)))continue;if(selfFacts(old.text).some(previous=>previous.key===fact.key&&(previous.polarity!==fact.polarity||['nickname','pet','activity','project'].includes(fact.category)&&previous.value!==fact.value))){auditNote(old,this.now(),'本人新陈述修正');old.deletedAt=this.now();old.supersededBy=noteId;}}
         person.names=[evidence.name,...person.names].filter((value,index,array)=>value&&array.indexOf(value)===index).slice(0,5);person.lastSeenAt=evidence.at;
         person.notes.push({id:noteId,text:fact.text,visibility,chat:turn.conversationKey,evidenceId:evidence.evidenceId,evidence:evidence.text.slice(0,300),at:this.now(),expiresAt:this.now()+(fact.category==='nickname'?this.settings.nicknameRetentionDays:fact.category==='plan'?this.settings.planRetentionDays:this.settings.factRetentionDays)*86400000});data.people[id]=person;saved++;
       }
@@ -58,12 +95,14 @@ export class PeopleMemory{
       const ranked=(data.people[person.id]?.notes??[]).filter(note=>!note.deletedAt&&note.expiresAt>this.now()&&this.allowedSource(note.chat)&&(note.chat===turn.conversationKey||this.settings.allowCrossChat&&note.visibility==='person')).map(note=>({...note,score:tokens.reduce((score,token)=>score+(note.text.toLocaleLowerCase().includes(token)?1:0),0)})).sort((a,b)=>b.score-a.score||b.at-a.at);
       const nickname=ranked.filter(note=>selfFacts(note.text).some(fact=>fact.category==='nickname')).sort((a,b)=>b.at-a.at)[0];
       const pinned=ranked.filter(note=>note.pinned).sort((a,b)=>(b.modifiedAt??b.at)-(a.modifiedAt??a.at));const ordered=[...pinned,...(nickname?[nickname]:[]),...ranked],seen=new Set();const selected=ordered.filter(note=>!seen.has(note.id)&&seen.add(note.id)).slice(0,Math.min(args.limit??this.settings.recallLimit,this.settings.recallLimit));
-      return {id:person.id,name:person.name,notes:selected.map(note=>({id:note.id,text:note.text,visibility:note.visibility,at:note.modifiedAt??note.at,source:note.correctedAt?'本机用户纠正的事实':note.chat===turn.conversationKey?'本聊天的本人陈述':'本人明确允许跨聊天使用'}))};
+      return {id:person.id,name:person.name,notes:selected.map(note=>({id:note.id,text:note.episode?`[${{planned:'已约定',completed:'已发生',cancelled:'已取消'}[note.episode.state]}${note.episode.day?' '+note.episode.day:''}] ${note.text}`:note.text,visibility:note.visibility,at:note.modifiedAt??note.at,source:note.correctedAt?'本机用户纠正的事实':note.episode?'本聊天自动提取的事件':note.chat===turn.conversationKey?'本聊天的本人陈述':'本人明确允许跨聊天使用'}))};
     });
     const contextBatch=hash(JSON.stringify(this.observations(turn).map(row=>row.evidenceId).sort())),previous=data.usage[turn.conversationKey];
     const counts=previous?.contextBatch===contextBatch&&previous.contextPeople&&Object.entries(previous.contextPeople).every(([id,n])=>HEX.test(id)&&Number.isInteger(n)&&n>=0&&n<=8)?{...previous.contextPeople}:{};
-    for(const person of result)counts[person.id]=person.notes.length;
-    data.usage[turn.conversationKey]={lastContextNotes:Object.values(counts).reduce((a,b)=>a+b,0),contextBatch,contextPeople:counts};this.write(data);return result;
+    const recalled=previous?.contextBatch===contextBatch&&Array.isArray(previous.recalledNoteIds)?previous.recalledNoteIds.filter(id=>HEX.test(id)).slice(0,40):[];
+    for(const person of result){counts[person.id]=person.notes.length;recalled.push(...person.notes.map(note=>note.id));}
+    data.usage[turn.conversationKey]={lastContextNotes:Object.values(counts).reduce((a,b)=>a+b,0),contextBatch,contextPeople:counts,
+      recalledNoteIds:[...new Set(recalled)].slice(0,40),lastRecallAt:this.now()};this.write(data);return result;
   }
   remember(turn,args){return this.mutate(()=>this.rememberUnlocked(turn,args));}
   rememberUnlocked(turn,args){
@@ -92,7 +131,7 @@ export class PeopleMemory{
     if(body.action==='restore'){delete note.deletedAt;note.expiresAt=Math.max(note.expiresAt,this.now()+this.settings.factRetentionDays*86400000);}
     this.write(data);return {saved:true};
   });}
-  managementCatalog(){const data=this.read();return {people:Object.values(data.people).map(person=>({id:person.id,names:person.names,firstSeenAt:person.firstSeenAt,lastSeenAt:person.lastSeenAt,notes:person.notes.map(({evidence,...note})=>({...note,revision:noteRevision(person.notes.find(n=>n.id===note.id)),status:note.deletedAt?'forgotten':note.expiresAt<=this.now()?'expired':'active'}))})).sort((a,b)=>b.lastSeenAt-a.lastSeenAt),usage:structuredClone(data.usage)};}
+  managementCatalog({identityLinks=false}={}){const data=this.read();return {people:Object.values(data.people).map(person=>({id:person.id,names:person.names,firstSeenAt:person.firstSeenAt,lastSeenAt:person.lastSeenAt,...(identityLinks?{archiveIds:person.archiveIds??[]}:{}),notes:person.notes.map(note=>{const {evidence,...view}=note;return {...view,revision:noteRevision(note),status:note.deletedAt?'forgotten':note.expiresAt<=this.now()?'expired':'active'};})})).sort((a,b)=>b.lastSeenAt-a.lastSeenAt),usage:structuredClone(data.usage)};}
   overrides(turn){const data=this.read(),current=this.observations(turn);return Object.values(data.people).flatMap(person=>person.notes.filter(note=>(note.correctedAt||note.deletedAt||note.history?.some(h=>h.visibility==='person')&&note.visibility==='chat')&&this.allowedSource(note.chat)&&(note.chat===turn.conversationKey||note.visibility==='person'||note.history?.some(h=>h.visibility==='person'))).map(note=>({personId:person.id,archiveIds:[...new Set([...(person.archiveIds??[]),...current.filter(row=>row.personId===person.id).flatMap(row=>[hash(row.senderId),...(HEX.test(row.memberId??'')?[row.memberId]:[])])])],redactions:[...new Set([...(note.history??[]).map(h=>h.text),...(note.deletedAt?[note.text]:[])])],replacement:note.correctedAt&&!note.deletedAt&&note.expiresAt>this.now()&&(note.chat===turn.conversationKey||this.settings.allowCrossChat&&note.visibility==='person')?note.text:null})));}
   forgetForTurn(turn,args){const data=this.read(),evidence=this.observations(turn).find(row=>row.evidenceId===args?.evidenceId);if(!evidence||!/忘记|删除.*记忆|forget/i.test(evidence.text)||!data.people[evidence.personId]?.notes.some(note=>note.id===args.id))throw Error('PEOPLE_MEMORY_FORGET_NOT_CONFIRMED');return this.forget(args.id);}
   catalog(){const data=this.read();return {people:Object.values(data.people).map(person=>({...person,notes:person.notes.filter(note=>!note.deletedAt&&note.expiresAt>this.now()).map(({evidence,...note})=>note)})).filter(person=>person.notes.length).sort((a,b)=>b.lastSeenAt-a.lastSeenAt)};}

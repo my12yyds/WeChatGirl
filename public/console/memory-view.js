@@ -12,8 +12,8 @@ export function createMemoryUI({api,state,escapeHtml:esc,icon,renderPage,toast,n
     return `<article class="memory-timeline-item"><div class="memory-time"><time>${date(row.at)}</time><span>${row.source==='native'?'DSH 原生压缩':'本地历史摘要'}</span></div><details class="memory-summary" ${index===0?'open':''}><summary><span><strong>${esc(row.source==='native'?'会话压缩摘要':'聊天历史摘要')}</strong><small>${mode(row.mode)} · ${Number(row.characters??row.text.length).toLocaleString()} 字符${row.coveredTokens!=null?' · 覆盖 '+Number(row.coveredTokens).toLocaleString()+' token':''}</small></span>${icon('arrow')}</summary><div class="memory-summary-body"><pre>${esc(row.text)}</pre>${row.truncated?'<p class="scope-note">内容较长，此处展示前 60,000 字符。</p>':''}<div class="memory-summary-footer"><span class="mono">${esc(row.id)}</span><button class="button small" data-memory-copy="${index}">复制摘要</button></div></div></details></article>`;
   }
   async function page(){
-    const request=++sequence,nextSection=state.memorySection??'members';if(section!==nextSection){section=nextSection;offset=0;selected='';query='';status=section==='people'?'active':'all';}
-    const tabs=`<nav class="workspace-tabs" aria-label="记忆分类">${[['people','人物与事实'],['members','群友记忆'],['summaries','压缩记忆'],['diagnostics','运行诊断'],['evaluation','长对话评测'],['notebook','鱼的记事本']].map(([id,name])=>`<a href="#memory/${id}" ${section===id?'aria-current="page"':''}>${name}</a>`).join('')}</nav>`;
+    const request=++sequence,nextSection=state.memorySection??'people';if(section!==nextSection){section=nextSection;offset=0;selected='';query='';status=section==='people'?'active':'all';}
+    const tabs=`<nav class="workspace-tabs" aria-label="记忆分类">${[['people','人物与事实'],['members','群友记忆'],['summaries','压缩记忆'],['diagnostics','运行诊断'],['evaluation','长对话评测'],['notebook','鱼的记事本']].map(([id,name])=>`<a href="#memory/${id}" ${section===id?'aria-current="page"':''}>${name}</a>`).join('')}<a href="#constellation">打开记忆星图 ↗</a></nav>`;
     if(evaluationTimer){clearTimeout(evaluationTimer);evaluationTimer=null;}
     if(section==='notebook')return tabs+await notebookPage();
     if(section==='people')return tabs+await peoplePage();

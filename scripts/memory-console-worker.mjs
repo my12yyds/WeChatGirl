@@ -8,6 +8,13 @@ try{
   const {file,keys,source}=workerData;db=new DatabaseSync(file,{readOnly:true});db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=150;');
   const has=name=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name),mode=key=>key.endsWith(':assistant-chat')?'assistant-chat':key.endsWith(':assistant')?'assistant':'social';
   let history=[],historyTotal=0,native=[];
+  if(source==='constellation'){
+    const statement=has('checkpoints')&&db.prepare('SELECT id,chat,at,substr(text,1,520) text FROM checkpoints WHERE chat=? ORDER BY at DESC,id DESC');
+    if(statement)for(const chat of keys)for(const suffix of ['',':assistant',':assistant-chat']){
+      for(const row of statement.iterate(chat+suffix))history.push({id:row.id,chat,at:row.at,text:row.text,mode:mode(row.chat)});
+    }
+    parentPort.postMessage({history});
+  }else{
   if(has('checkpoints')){
     historyTotal=Number(db.prepare('SELECT count(*) n FROM checkpoints WHERE chat IN (?,?,?)').get(...keys).n);
     if(source!=='native')history=db.prepare('SELECT id,chat,at,substr(text,1,60000) text,length(text) characters FROM checkpoints WHERE chat IN (?,?,?) ORDER BY at DESC,id DESC LIMIT 200').all(...keys).map(row=>({id:'history:'+row.id,source:'history',mode:mode(row.chat),at:row.at,text:row.text,characters:row.characters,truncated:row.characters>60000}));
@@ -28,4 +35,5 @@ try{
     native=native.sort((a,b)=>b.at-a.at||b.id.localeCompare(a.id)).slice(0,50);
   }catch{nativeError=true;}
   parentPort.postMessage({history,historyTotal,native,nativeError});
+  }
 }catch{parentPort.postMessage({error:true});}finally{db?.close();}

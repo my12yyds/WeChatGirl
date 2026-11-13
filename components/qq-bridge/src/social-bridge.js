@@ -21,6 +21,9 @@ import { ContextMaintenance } from './core/context-maintenance.js';
 import {HistoryStore} from '../../../packages/dsh-social-bridge-plugin/history-store.mjs';
 import {scopeHistory} from '../../../packages/dsh-social-bridge-plugin/work-modes.mjs';
 import {activeReaderAccount} from '../../../scripts/reader-account-state.mjs';
+import {createHash} from 'node:crypto';
+import {PeopleMemory,peopleObservations} from '../../../packages/plugin-api/people-memory.mjs';
+import {memoryPluginPolicy} from '../../../packages/plugin-api/memory-policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const configPath = path.resolve(process.argv[2] ?? path.join(root, 'config.social.json'));
@@ -37,6 +40,14 @@ if (allowedGroups.size + allowedPrivate.size === 0) console.warn('[Social] WeCha
 const log = (line) => console.log(new Date().toISOString(), line);
 const historyRoot=path.resolve(config.project_root??(config.search_policy_file?path.dirname(path.dirname(config.search_policy_file)):path.resolve(root,'../..')));
 const historyAccount=activeReaderAccount(historyRoot);
+const peopleAccountScope=historyAccount.id?createHash('sha256').update(historyAccount.id).digest('hex'):null;
+function captureChatEpisode(key,message){
+  if(!peopleAccountScope||!message.message_id||message.outgoing||!verifiedAssistantSender(message)||activeReaderAccount(historyRoot).id!==historyAccount.id)return;
+  const {active,settings}=memoryPluginPolicy(historyRoot,key);
+  if(!active||!settings.autoRemember||!settings.rememberPlan||!pluginEnabled(historyRoot,'people-memory',key))return;
+  const memory=new PeopleMemory({root:historyRoot,accountScope:peopleAccountScope,accountId:historyAccount.id,settings});
+  memory.capture({conversationKey:key,peopleObservations:peopleObservations(key,[message])},{episodesOnly:true});
+}
 const baseHistoryStore=new HistoryStore(historyRoot,historyAccount.id||historyAccount.legacyId);
 const historyStore=scopeHistory(baseHistoryStore,(_key,row)=>row?.work_mode??'social');
 const historyArchive={backfill:(...args)=>historyStore.backfill(...args),append:(...args)=>{
@@ -128,6 +139,7 @@ async function routeIncoming(message) {
     if(buffer.findIncoming(message)||memberBuffer.findIncoming(message)||message.kind==='group'&&engine.workModeFor(key)==='assistant'&&engine.assistantAllowed(key,message)&&memberHistory.hasIncoming(key,message)){
       log('[WeChat] '+key+' duplicate_routed_input_ignored');return;
     }
+    try{if(engine.workModeFor(key)==='social')captureChatEpisode(key,message);}catch{log('[Memory] automatic_event_write_unavailable');}
     if(message.kind==='group'&&engine.workModeFor(key)==='assistant'&&(!engine.assistantAllowed(key,message)||assistantChatRequest(message,wechat.wake_words??[]))){
       await memberConnection.check({force:true});memberEngine.receive({...message,assistant_chat_only:true});
     }else{await connection.check({force:true});engine.receive(message);}

@@ -448,6 +448,9 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         for(const file of ['interface-model.mjs','theme-init.js','color-theme.js','persona-studio.js','persona-studio-model.mjs'])assets['/'+file]=[file,'text/javascript; charset=utf-8'];
         for(const file of ['ui-polish.css','persona-studio.css','redesign.css'])assets['/'+file]=[file,'text/css; charset=utf-8'];
         assets['/memory-view.js']=['memory-view.js','text/javascript; charset=utf-8'];assets['/memory-view.css']=['memory-view.css','text/css; charset=utf-8'];
+        assets['/memory-constellation.js']=['memory-constellation.js','text/javascript; charset=utf-8'];
+        for(const file of ['memory-galaxy.mjs','memory-constellation-demo.mjs'])assets['/'+file]=[file,'text/javascript; charset=utf-8'];
+        assets['/memory-constellation.css']=['memory-constellation.css','text/css; charset=utf-8'];
         assets['/fish-notebook.js']=['fish-notebook.js','text/javascript; charset=utf-8'];assets['/fish-notebook.css']=['fish-notebook.css','text/css; charset=utf-8'];
         assets['/conversation-settings.mjs']=['conversation-settings.mjs','text/javascript; charset=utf-8'];
         assets['/dsh-catalog.mjs']=['dsh-catalog.mjs','text/javascript; charset=utf-8'];
@@ -480,6 +483,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       if(req.method==='GET'&&route==='/api/memory/members')return reply(200,memoryView.members(url.searchParams));
       if(req.method==='GET'&&route==='/api/memory/summaries')return reply(200,await memoryView.summaries(url.searchParams));
       if(req.method==='GET'&&route==='/api/memory/people')return reply(200,peopleView.snapshot(url.searchParams));
+      if(req.method==='GET'&&route==='/api/memory/constellation')return reply(200,await peopleView.constellation(url.searchParams));
       if(req.method==='GET'&&route==='/api/memory/diagnostics')return reply(200,await peopleView.diagnostics());
       if(req.method==='GET'&&route==='/api/memory/evaluation')return reply(200,memoryEvaluation.snapshot());
       if (req.method === 'GET' && route === '/api/config') return reply(200, { ...snapshot(), ...optionalJson(preferenceFile) });

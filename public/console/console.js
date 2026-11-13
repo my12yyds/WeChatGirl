@@ -2,6 +2,7 @@ import {sessionUsage} from './session-usage.js';
 import {consoleRoute,routeKey,SETTINGS_SECTIONS} from './layout-model.mjs';
 import {createWorkspaceLayout} from './workspace-layout.js';
 import {createMemoryUI} from './memory-view.js';
+import {constellationMarkup,mountConstellation} from './memory-constellation.js';
 import {createFishNotebookUI} from './fish-notebook.js';
 import {createAssistantFeedbackUI} from './assistant-feedback.js';
 import {createPersonaStudio} from './persona-studio.js';
@@ -32,6 +33,7 @@ const dshModels=createDshModelsUI({api,state,escapeHtml,icon,modal,closeModal,to
 const personaStudio=createPersonaStudio({api,state,modal,closeModal,escapeHtml,icon,toast,importRole});
 const fishNotebookUI=createFishNotebookUI({api,state,escapeHtml,icon,renderPage,toast,onSave:result=>syncExtensionProject(result,'fishNotebook')});
 const memoryUI=createMemoryUI({api,state,escapeHtml,icon,renderPage,toast,notebookPage:()=>fishNotebookUI.page()});
+let disposeConstellation;
 const assistantFeedbackUI=createAssistantFeedbackUI({api,modal,closeModal,escapeHtml,icon,toast});
 const personaCategoryUI=createPersonaCategoryUI({state,api,modal,closeModal,escapeHtml,renderPage,toast});
 const sessionGroupUI=createSessionGroupUI({api,modal,closeModal,escapeHtml,icon,renderPage,toast});
@@ -57,6 +59,7 @@ const pages = {
   plugins: ['插件与聊天', '选择每个插件在哪些允许的聊天中运行；参数和权限仍在能力页配置。'],
   stickers: ['表情包', '查看、添加与整理当前账号的共享表情包。'],
   memory: ['记忆', '管理人物事实、查看记忆来源，核对运行状态与长对话表现。'],
+  constellation: ['记忆星图', '查看人物、日常聊天中记录的事件，以及最近召回的记忆。'],
   voice: ['语音音色', '选择本地模型、管理自定义音色与语音回复。'],
   music: ['音乐', '登录网易云、搜索歌曲并查看本机已加载的曲库。'],
   sending: ['发送模式', '选择微信发送方式，并查看两种模式下可用的功能。'],
@@ -488,6 +491,7 @@ async function renderPage() {
     if (page === 'plugins') markup = await extensionUI.pluginsPage({selectedPluginId:currentRoute.section,returnTo:state.pluginReturnHash||'#plugins'});
     if (page === 'stickers') markup = await workspaceLayout.stickersPage();
     if (page === 'memory') markup = await memoryUI.page();
+    if (page === 'constellation') markup = constellationMarkup();
     if (page === 'voice') markup = '<div id="voice-page" class="music-page"></div>';
     if (page === 'music') markup = '<div id="music-page" class="music-page"></div>';
     if (page === 'sending') markup = '<div class="section-stack">'+sendModeCard(state.draft.wechat.textTransport?.mode==='foreground'?'foreground':'native',header,state.draft.wechat.textTransport?.compatibilityMedia,state.draft.wechat.textTransport?.compatibilityStickers)+'</div>';
@@ -501,6 +505,7 @@ async function renderPage() {
   const applyPage=()=>{
   if(sequence!==renderSequence)return;
   renderedRoute=targetRoute;
+  disposeConstellation?.();disposeConstellation=undefined;
   document.body.dataset.view=page;
   if(page==='setup')markup+=`<section class="card process-recovery-card">${header('端口与进程排查','遇到端口占用、其他微信实例或连接失败时，先检查正在运行的进程。','','tool')}<p class="card-description">检查不会停止程序。只有选中具体进程并再次确认后才会停止；随后可重新打开微信或 DSH，再重试配置。</p><button class="button" data-process-recovery>${icon('search')}检查端口与进程</button></section>`;
   const host=$('#page-body'),existingMain=host.querySelector('.setup-main');
@@ -521,6 +526,7 @@ async function renderPage() {
     }else host.innerHTML=markup;
   }else{host.style.minHeight='';host.innerHTML=markup;}
   host.removeAttribute('aria-busy'); updateDraftUI(); paintStatus(); paintReaderSetup();
+  keepActiveNavigationVisible();
   if($('#wechat-clients'))void inspectWeChatClients();
   if(page==='music')mountMusicPage($('#music-page'),{api,esc:escapeHtml,toast,chats:['private','group'].flatMap(kind=>(state.config.wechat.whitelist[kind==='group'?'groups':'private']??[]).map(value=>{const key='wechat:'+kind+':'+value;return {key,name:state.names.get(key)??key};}))});
   if(page==='voice')mountVoiceStudioPage($('#voice-page'),{api,esc:escapeHtml,toast,chats:['private','group'].flatMap(kind=>(state.config.wechat.whitelist[kind==='group'?'groups':'private']??[]).map(value=>{const key='wechat:'+kind+':'+value;return {key,name:state.names.get(key)??key};}))});
@@ -528,6 +534,7 @@ async function renderPage() {
   if(page==='settings'&&state.settingsSection==='connections'||page==='setup'&&state.setupStep==='model')void dshModels.mount();
   if(page==='setup')paintSetupGuide();
   if(page==='memory'){if(state.memorySection==='notebook')fishNotebookUI.mount();else memoryUI.mount();}
+  if(page==='constellation')disposeConstellation=mountConstellation($('[data-constellation]'),{api,esc:escapeHtml,names:state.names});
   if(page==='stickers'&&state.stickerSection==='library')stickerManagerUI.mount();
   if(page==='stickers'&&state.stickerSection==='collection')api('/api/sticker-pool').then(pool=>{if(sequence!==renderSequence||!$('#sticker-pool-status'))return;const labels={selected:'DS 已完成评选',waiting_retry:'等待 DS 重试'};$('#sticker-pool-status').textContent='已入池 '+pool.count+'/50 · 待评选 '+(pool.waiting+pool.legacyWaiting)+' · '+(pool.review==='reviewing'?'DS 正在评选':labels[pool.lastReview?.status]??(pool.waiting?'等待 DS 评选':'未满池或没有新候选'));}).catch(()=>{});
   $('#role-content')?.addEventListener('input', event => {
@@ -835,16 +842,32 @@ $('#job-close').addEventListener('click', () => { $('#job-panel').hidden = true;
 $('#activity-button').addEventListener('click', () => { if (state.job) { $('#job-panel').hidden = false; paintJob(); } });
 $('#job-retry').addEventListener('click', () => { if (state.jobBody?.action === 'reader-connect') saveReader(state.jobBody.autoKey); else if (state.jobBody) runAction(state.jobBody.action, state.jobBody.conversationKey); else toast('请回到对应页面重新执行。'); });
 const mobileNavigation=matchMedia('(max-width:640px)');
+function keepActiveNavigationVisible(){
+  const sidebar=$('#sidebar'),nav=sidebar.querySelector('nav'),active=nav.querySelector('[aria-current="page"]');
+  if(sidebar.inert||!active||active.hidden)return;
+  const listBounds=nav.getBoundingClientRect(),activeBounds=active.getBoundingClientRect();
+  if(activeBounds.bottom>listBounds.bottom)nav.scrollTop+=activeBounds.bottom-listBounds.bottom+4;
+  else if(activeBounds.top<listBounds.top)nav.scrollTop+=activeBounds.top-listBounds.top-4;
+}
 function paintNavigation() {
   const open=mobileNavigation.matches&&document.body.classList.contains('nav-open');
   $('#sidebar').inert=mobileNavigation.matches&&!open;
   $('#sidebar').setAttribute('aria-hidden',String(mobileNavigation.matches&&!open));
   $('#menu-button').setAttribute('aria-expanded',String(open));
   $('#menu-button').setAttribute('aria-label',open?'关闭导航':'打开导航');
+  if(open)keepActiveNavigationVisible();
 }
-$('#menu-button').addEventListener('click',()=>{document.body.classList.toggle('nav-open');paintNavigation();});
+function closeNavigation(){
+  $('#menu-button').focus({preventScroll:true});
+  document.body.classList.remove('nav-open');paintNavigation();
+}
+$('#menu-button').addEventListener('click',()=>{
+  if(document.body.classList.contains('nav-open')){closeNavigation();return;}
+  document.body.classList.add('nav-open');paintNavigation();$('#sidebar-close').focus();
+});
+$('#sidebar-close').addEventListener('click',closeNavigation);
 mobileNavigation.addEventListener('change',()=>{document.body.classList.remove('nav-open');paintNavigation();});
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('#modal').open&&document.body.classList.contains('nav-open')){document.body.classList.remove('nav-open');paintNavigation();$('#menu-button').focus();}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('#modal').open&&document.body.classList.contains('nav-open'))closeNavigation();});
 paintNavigation();
 $('#quit-console').addEventListener('click', () => {
   if (hasDraft()) return toast('请先保存或放弃草稿，再退出控制台。');
@@ -864,7 +887,7 @@ if (window.desktop) {
 document.addEventListener('click', event => { if (document.body.classList.contains('nav-open') && !event.target.closest('.sidebar') && !event.target.closest('#menu-button')) {document.body.classList.remove('nav-open');paintNavigation();} });
 history.scrollRestoration='manual';
 const routeBackStack=[];let lastRouteHash=location.hash||'#overview',goingBack=false;
-document.addEventListener('click',event=>{if(!event.target.closest('#page-back'))return;if(routeBackStack.length){goingBack=true;location.hash=routeBackStack.pop();}else location.hash='#overview';});
+document.addEventListener('click',event=>{if(!event.target.closest('#page-back,[data-star-back]'))return;if(routeBackStack.length){goingBack=true;location.hash=routeBackStack.pop();}else location.hash='#overview';});
 window.addEventListener('hashchange', async () => {if(!goingBack)routeBackStack.push(lastRouteHash);goingBack=false;lastRouteHash=location.hash; pageScroll.set(routeKey(currentRoute),window.scrollY);selectRoute(location.hash);document.body.classList.remove('nav-open');paintNavigation();await renderPage();});
 document.addEventListener('click',event=>{for(const menu of document.querySelectorAll('.action-menu[open]'))if(!menu.contains(event.target))menu.open=false;});
 window.addEventListener('beforeunload', event => { if (document.querySelector('[data-unsaved=true]') || hasDraft() || personaStudio.hasDraft() || personaStudio.isBusy() || document.querySelector('#chat-settings-form [type=submit]:not(:disabled)')) { event.preventDefault(); event.returnValue = ''; } });

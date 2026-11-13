@@ -25,7 +25,7 @@ export function createMemoryConsole({root,configFor,plugin,now=Date.now}){
     const config=configFor(),chats=['groups','private'].flatMap(kind=>(config.wechat.whitelist?.[kind]??[]).map(id=>{const key='wechat:'+(kind==='groups'?'group':'private')+':'+id;return {key,id:String(id),kind,memberMemoryEnabled:memberMemoryEnabled(config.wechat,key)};}));
     return {available:true,accountScope,chats};
   }
-  function members(params){
+  function members(params,{all=false}={}){
     const id=scope(params.get('scope')),key=params.get('conversationKey'),config=chat(key);if(!key.startsWith('wechat:group:'))throw fault('群友记忆只适用于群聊。');
     const offset=pageNumber(params.get('offset'),0,100000),query=(params.get('query')??'').trim().toLocaleLowerCase(),status=params.get('status')??'all';if(query.length>80||!['all','observed','tentative','untagged'].includes(status))throw fault('群友筛选参数无效。');
     const file=safeFile(root,'member-memory',id,key.split(':')[2]+'.json');let entries=[];
@@ -41,7 +41,18 @@ export function createMemoryConsole({root,configFor,plugin,now=Date.now}){
     }
     const stats={members:entries.length,tags:entries.reduce((n,m)=>n+m.tags.length,0),tentative:entries.reduce((n,m)=>n+m.tags.filter(tag=>tag.status==='tentative').length,0)};
     const filtered=entries.filter(m=>(!query||[m.senderId,m.memberId,...m.names,...m.tags.map(t=>t.label)].some(s=>s.toLocaleLowerCase().includes(query)))&&(status==='all'||(status==='untagged'?!m.tags.length:m.tags.some(tag=>tag.status===status)))).sort((a,b)=>b.lastSeenAt-a.lastSeenAt||a.memberId.localeCompare(b.memberId));
-    scope(id);return {accountScope:id,conversationKey:key,enabled:memberMemoryEnabled(config.wechat,key),stats,total:filtered.length,offset,limit:24,members:filtered.slice(offset,offset+24)};
+    scope(id);return {accountScope:id,conversationKey:key,enabled:memberMemoryEnabled(config.wechat,key),stats,total:filtered.length,offset,limit:24,members:all?filtered:filtered.slice(offset,offset+24)};
+  }
+  async function savedSummaries(id,keys){
+    scope(id);
+    const file=safeFile(root,'chat-history',id,'history.sqlite');
+    if(!fs.existsSync(file))return [];
+    safeFile(root,'chat-history',id,'history.sqlite-wal');safeFile(root,'chat-history',id,'history.sqlite-shm');
+    if(!fs.statSync(file).isFile())throw Error('HISTORY_FILE_INVALID');
+    const result=await readHistory(file,keys,'constellation');
+    scope(id);
+    if(result.error)throw Error('HISTORY_READ_UNAVAILABLE');
+    return result.history;
   }
   async function summaries(params){
     const id=scope(params.get('scope')),key=params.get('conversationKey');chat(key);const offset=pageNumber(params.get('offset'),0,100000),source=params.get('source')??'all';if(!['all','history','native'].includes(source))throw fault('请选择有效的记忆来源。');
@@ -56,5 +67,5 @@ export function createMemoryConsole({root,configFor,plugin,now=Date.now}){
     const rows=[...history,...native].sort((a,b)=>b.at-a.at||b.id.localeCompare(a.id));
     scope(id);return {accountScope:id,conversationKey:key,offset,limit:24,total:rows.length,historyTotal,historyLimited:historyTotal>200,historyError,nativeAvailable,nativeStatus,summaries:rows.slice(offset,offset+24)};
   }
-  return {overview,members,summaries};
+  return {overview,members,summaries,savedSummaries};
 }
