@@ -57,7 +57,7 @@
       <div class="page-heading"><div><button class="button small" id="page-back" type="button">← 返回上一页</button><h1 id="page-title">工作台</h1><p id="page-description">对话、陪伴与灵感，从这里开始。</p></div><span class="subtle" id="updated-label"></span></div>
       <div id="pending-banner" class="notice" hidden><svg><use href="/icons.svg#info"></use></svg><span id="pending-message">设置已保存，重启服务后生效。</span><button class="button small" data-action="restart">重启并应用</button></div>
       <div id="setup-banner" class="notice" hidden><svg><use href="/icons.svg#info"></use></svg><span>继续配置微信、模型与允许的聊天，完成后即可开始对话。</span><a class="button small" href="#setup">开始配置</a></div>
-      <div id="update-banner" class="notice" hidden role="status"><span id="update-message"></span><a class="button small" id="update-download" target="_blank" rel="noopener noreferrer">下载更新</a><a class="text-link" id="update-notes" target="_blank" rel="noopener noreferrer">发布说明</a><button class="button small" id="dismiss-update">稍后</button></div>
+      <div id="update-banner" class="notice" hidden role="status"><span id="update-message"></span><div class="button-row" id="update-download" aria-label="更新下载来源"></div><a class="text-link" id="update-notes" target="_blank" rel="noopener noreferrer">发布说明</a><button class="button small" id="dismiss-update">稍后</button></div>
       <div id="page-body"><div class="loading-state">正在连接本机控制台…</div></div>
     </main>
     <div class="save-bar" id="save-bar" hidden><div><strong>有未保存的设置</strong><span>表情、网页阅读、联网、主动聊天与上下文设置保存后生效，其他设置需重启服务。</span></div><div class="button-row"><button class="button" id="discard-button">放弃更改</button><button class="button primary" id="save-button">保存设置</button></div></div>

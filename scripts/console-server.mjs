@@ -442,6 +442,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         assets['/music.js']=['music.js','text/javascript; charset=utf-8'];assets['/music.css']=['music.css','text/css; charset=utf-8'];assets['/send-mode-ui.mjs']=['send-mode-ui.mjs','text/javascript; charset=utf-8'];assets['/send-mode.css']=['send-mode.css','text/css; charset=utf-8'];
         assets['/sticker-manager.js']=['sticker-manager.js','text/javascript; charset=utf-8'];assets['/sticker-manager.css']=['sticker-manager.css','text/css; charset=utf-8'];
         assets['/updates.js']=['updates.js','text/javascript; charset=utf-8'];
+        assets['/download-links.mjs']=['download-links.mjs','text/javascript; charset=utf-8'];
         for(const file of ['workspace-layout.js','layout-model.mjs','session-usage.js'])assets['/'+file]=[file,'text/javascript; charset=utf-8'];
         assets['/workspace-layout.css']=['workspace-layout.css','text/css; charset=utf-8'];
         assets['/assistant-feedback.js']=['assistant-feedback.js','text/javascript; charset=utf-8'];
@@ -517,7 +518,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         for(const item of catalog.plugins)if(item.id==='speech-recognition')item.serviceStatus=speechChecks.status();
         for(const item of catalog.plugins)if(item.enabled&&item.requiresHostFeatures.some(feature=>!liveFeatures.includes(feature))){item.loaded=false;item.active=false;item.reason='请准备配置并完整重开 DSH，加载此插件需要的新版宿主。';item.statusLabel='等待新版宿主';item.statusTone='warning';}
         if(route==='/api/plugins')return reply(200,{...catalog,runtimeConnected:pluginApiReady});
-        return reply(200,{...builtinCatalog(saved.config,saved.revision,connected),plugins:catalog.plugins,pluginRevision:catalog.revision,pluginError:catalog.error??null,canInstallZip:true,pluginApiReady});
+        return reply(200,{...builtinCatalog(saved.config,saved.revision,connected),plugins:catalog.plugins,pluginRevision:catalog.revision,pluginError:catalog.error??null,canInstallZip:true,pluginApiReady,packageDownloads:pluginPackages(projectRoot)});
       }
       if (req.method === 'GET' && route === '/api/deployment') {
         const distribution = optionalJson(path.join(root, 'config', 'distribution.json'));

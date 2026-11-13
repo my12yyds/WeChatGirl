@@ -1,3 +1,5 @@
+import {downloadLinks} from './download-links.mjs';
+
 // Parameter presets only: these reuse the installed engine, not CosyVoice/GPT-SoVITS weights.
 export const VOICE_PRESETS=Object.freeze({
  reference:Object.freeze({name:'肥鱼·自然直出',baseStyle:'cute',pitch:0,speed:1,feiyu:false,instruction:'自然清晰地说话。',referenceText:'',volume:1,bassDb:0,trebleDb:0,normalize:false,trimSilence:false,cfgScale:1,temperature:0,seed:42}),
@@ -45,7 +47,7 @@ export function mountMusicPage(element,{api,esc,toast,chats=[]}){
 const labels={queued:'等待生成',generating:'正在生成',prepared:'等待发送',submitting:'正在提交',submitted:'等待微信回执',confirmed:'已核验送达',unconfirmed:'送达未确认，不自动重发',failed:'处理失败',cancelled:'已取消',expired:'等待已超时'};
 export function mountVoiceComponentsPanel(element,{api,esc}){
  const host=document.createElement('section');host.className='card voice-components-card';element.prepend(host);
- host.innerHTML='<div class="card-header"><div><h2>语音组件管理</h2><p class="card-description">播放和微信语音编码已在主程序中；大型本地运行环境可在这里导入。</p></div></div><p data-components-status role="status">正在检查组件…</p><div class="button-row"><a class="button" data-components-download target="_blank" rel="noopener noreferrer" hidden>下载语音组件包</a><button type="button" class="button primary" data-components-select disabled>选择 ZIP 并导入</button><button type="button" class="button" data-components-refresh>重新检查</button></div><p class="subtle space-top">下载 WeChatGirl-voice-components.zip 后直接选择，无须手动解压。只补充缺少的环境目录，已有目录保留；导入不会修改账号、音色、模型或歌曲。</p><section class="space-top"><h3>导入位置与本地合成条件</h3><p data-components-target class="mono data-location"></p><p class="subtle">这个附件是运行环境包，不包含全部说话、唱歌模型，也不会安装或注册 WSL。导入完成不等于本地语音服务已就绪；下方会列出仍缺少的文件。外接语音 API 可在“语音合成来源”配置，无需导入这个本地环境包。</p><p data-components-models class="card-description"></p></section><p data-components-feedback class="card-description" role="status" aria-live="polite"></p>';
+ host.innerHTML='<div class="card-header"><div><h2>语音组件管理</h2><p class="card-description">播放和微信语音编码已在主程序中；大型本地运行环境可在这里导入。</p></div></div><p data-components-status role="status">正在检查组件…</p><div class="button-row"><div class="button-row" data-components-download aria-label="语音组件下载来源" hidden></div><button type="button" class="button primary" data-components-select disabled>选择 ZIP 并导入</button><button type="button" class="button" data-components-refresh>重新检查</button></div><p class="subtle space-top">下载 WeChatGirl-voice-components.zip 后直接选择，无须手动解压。只补充缺少的环境目录，已有目录保留；导入不会修改账号、音色、模型或歌曲。</p><section class="space-top"><h3>导入位置与本地合成条件</h3><p data-components-target class="mono data-location"></p><p class="subtle">这个附件是运行环境包，不包含全部说话、唱歌模型，也不会安装或注册 WSL。导入完成不等于本地语音服务已就绪；下方会列出仍缺少的文件。外接语音 API 可在“语音合成来源”配置，无需导入这个本地环境包。</p><p data-components-models class="card-description"></p></section><p data-components-feedback class="card-description" role="status" aria-live="polite"></p>';
  const $=name=>host.querySelector('[data-components-'+name+']');let timer,busy=false,requesting=false;
  const phases={starting:'准备校验',validating:'校验发行包',inspecting:'检查归档目录',extracting:'解压到临时目录',installing:'安装缺少的环境',complete:'导入完成',failed:'导入未完成'};
  async function refresh(){
@@ -54,7 +56,7 @@ export function mountVoiceComponentsPanel(element,{api,esc}){
    const state=await api('/api/voice-components');if(!host.isConnected)return;
    busy=!!state.job&&!['complete','failed'].includes(state.job.phase);
    $('status').textContent=state.components.map(item=>(item.id==='voice-python'?'Python 环境':'WSL 镜像')+'：'+({present:'文件已存在',incomplete:'目录存在但不完整，保留原内容',missing:'尚未导入'}[item.status]??'待检查')).join(' · ');
-   $('select').disabled=busy||!state.supported;$('download').href=state.package.url;$('download').hidden=false;
+   $('select').disabled=busy||!state.supported;if($('download').hidden){$('download').innerHTML=downloadLinks(state.package.url);$('download').hidden=false;}
    $('target').textContent='导入到当前数据目录：'+state.target;
    $('models').textContent=[['speechEngine','本地说话引擎'],['speechModel','说话模型'],['singingEnvironment','唱歌服务环境']].map(([key,name])=>name+'：'+(state.localFiles[key]?'文件已存在，仍需检查运行状态':'尚未配置')).join(' · ');
    if(state.job){const j=state.job,progress=j.phase==='extracting'&&j.filesTotal?' · '+j.filesDone+'/'+j.filesTotal+' 个文件':j.phase==='validating'&&j.bytesTotal?' · 已核对 '+Math.floor((j.bytesDone??0)/1024/1024)+' MB':'';$('feedback').textContent=(phases[j.phase]??'处理中')+progress+(j.message?' · '+j.message:'');}
